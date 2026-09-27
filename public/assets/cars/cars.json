@@ -1,0 +1,68 @@
+{
+  "c037": {
+    "key": "c037",
+    "wheelbase": 2.691,
+    "trackFront": 1.58,
+    "trackRear": 1.58,
+    "wheelRadius": 0.335,
+    "length": 4.7,
+    "width": 1.84,
+    "height": 1.06,
+    "frontOverhang": 0.63
+  },
+  "c025": {
+    "key": "c025",
+    "wheelbase": 2.51,
+    "trackFront": 1.801,
+    "trackRear": 1.777,
+    "wheelRadius": 0.364,
+    "length": 3.98,
+    "width": 2.07,
+    "height": 1.01,
+    "frontOverhang": 0.96
+  },
+  "c040": {
+    "key": "c040",
+    "wheelbase": 2.416,
+    "trackFront": 1.518,
+    "trackRear": 1.518,
+    "wheelRadius": 0.411,
+    "length": 3.94,
+    "width": 1.84,
+    "height": 1.22,
+    "frontOverhang": 0.78
+  },
+  "c039": {
+    "key": "c039",
+    "wheelbase": 2.51,
+    "trackFront": 1.653,
+    "trackRear": 1.5,
+    "wheelRadius": 0.424,
+    "length": 4.63,
+    "width": 2,
+    "height": 1.09,
+    "frontOverhang": 1.24
+  },
+  "c038": {
+    "key": "c038",
+    "wheelbase": 2.655,
+    "trackFront": 1.348,
+    "trackRear": 1.348,
+    "wheelRadius": 0.392,
+    "length": 4.48,
+    "width": 1.62,
+    "height": 1.26,
+    "frontOverhang": 1.2
+  },
+  "khronos": {
+    "key": "khronos",
+    "wheelbase": 2.799,
+    "trackFront": 1.952,
+    "trackRear": 1.964,
+    "wheelRadius": 0.383,
+    "length": 4.36,
+    "width": 2.34,
+    "height": 1.14,
+    "frontOverhang": 0.93
+  }
+}
