@@ -3,7 +3,7 @@ import { GLTF, GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { HDRLoader } from "three/examples/jsm/loaders/HDRLoader.js";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 
-export const ASSET_BASE = "/assets";
+export const ASSET_BASE = `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/assets`;
 
 export type Progress = (fraction: number, label: string) => void;
 
