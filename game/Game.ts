@@ -25,8 +25,10 @@ import { Store } from "./store";
 import { RacingLine, computeRacingLine, lineOffsetAt } from "./track/racingLine";
 import { clamp, smoothstep } from "./util/math";
 import { World, WATER_Y, setWorld } from "./world/World";
+import { Multiplayer, Room } from "./network/Multiplayer";
+import { RemoteCars } from "./render/RemoteCars";
 
-export type Screen = "loading" | "title" | "events" | "garage" | "briefing" | "driving" | "error";
+export type Screen = "loading" | "title" | "events" | "garage" | "briefing" | "driving" | "multiplayer" | "error";
 
 export interface UIState {
   screen: Screen;
@@ -70,7 +72,7 @@ export interface Hud {
   lapValid: boolean;
   progress: number;
   drift: { total: number; combo: number; mult: number; angle: number; active: boolean; zone: string | null } | null;
-  lesson: { title: string; steps: string[]; step: number; prompt: string; tip: string; progress: number } | null;
+  lesson: { title: string; steps: string[]; step: number; prompt: string; tip: string; progress: number; retry: boolean } | null;
   toasts: Toast[];
   assists: { abs: boolean; tc: boolean; esc: boolean };
   inputs: { throttle: number; brake: number; steer: number; handbrake: number };
@@ -80,11 +82,14 @@ export interface Hud {
   targets: [number, number, number] | null;
   camera: string;
   wrongSurface: boolean;
+  nitro: { enabled: boolean; charge: number; active: boolean };
 }
 
 const tmpV = new THREE.Vector3();
 
 export class Game {
+  readonly multiplayer = new Multiplayer((room) => this.startNetworkRace(room));
+  private opponents: RemoteCars | null = null;
   readonly store: Store<UIState>;
   profile: Profile;
   readonly input = new Input();
@@ -266,7 +271,7 @@ export class Game {
       /* compileAsync is an optimisation only */
     }
     this.progress(1, "Ready");
-    this.store.set({ screen: "title" });
+    this.store.set({ screen: new URLSearchParams(window.location.search).has("room") ? "multiplayer" : "title" });
     document.addEventListener("visibilitychange", this.onVisibility);
     this.last = performance.now();
     this.raf = requestAnimationFrame(this.frame);
@@ -350,6 +355,9 @@ export class Game {
     this.audio.start();
     this.audio.uiClick();
     if (screen !== "driving" && this.store.get().screen === "driving") {
+      this.multiplayer.leave();
+      this.opponents?.dispose();
+      this.opponents = null;
       this.session = null;
       this.parkForMenu();
       void this.ensureConditions({ time: "morning", weather: "dry" });
@@ -443,6 +451,8 @@ export class Game {
       const v = this.vehicle!;
       v.assists = this.effectiveAssists(ev);
       v.wetness = cond.weather === "wet" ? 1 : 0;
+      v.nitro.enabled = ev.kind === "free";
+      v.nitro.reset();
       const line = this.getLine(spec, cond.weather === "wet");
       const key = `${spec.id}|${cond.weather}`;
       if (key !== this.lineKey) {
@@ -469,7 +479,39 @@ export class Game {
   }
 
   restart() {
+    if (this.multiplayer.room) { this.resetCar(); return; }
     void this.startEvent();
+  }
+
+  async joinMultiplayer(name: string, code?: string) {
+    await this.multiplayer.join(name, this.store.get().carId, code);
+    try {
+      this.store.set({ freeConditions: { time: "morning", weather: "dry" } });
+      await this.startEvent("free");
+      const room = this.multiplayer.room;
+      if (!room || !this.session) throw new Error("Connection closed while loading. Please rejoin.");
+      const slot = room.players.findIndex((p) => p.id === this.multiplayer.store.get().id);
+      this.carView?.setPaint(room.players[slot].color);
+      this.spawnAt({ s: this.world.track.length - 35 - slot * 7, d: slot % 2 ? 2 : -2, speed: 0 }, true);
+      this.opponents ??= new RemoteCars(this.scene);
+      await this.multiplayer.ready();
+    } catch (error) {
+      this.multiplayer.leave();
+      this.go("multiplayer");
+      throw error;
+    }
+  }
+
+  private startNetworkRace(room: Room) {
+    if (!this.session || !this.vehicle) return;
+    const slot = room.players.findIndex((p) => p.id === this.multiplayer.store.get().id);
+    this.spawnAt({ s: this.world.track.length - 35 - slot * 7, d: slot % 2 ? 2 : -2, speed: 0 }, true);
+    this.vehicle.nitro.reset();
+    this.session.phase = "countdown";
+    this.session.countdown = this.multiplayer.countdown;
+    this.session.toasts = [];
+    this.store.set({ paused: false, settingsOpen: false, helpOpen: false });
+    this.input.clearEdges();
   }
 
   private spawnAt(sp: Spawn, fresh = false) {
@@ -496,8 +538,8 @@ export class Game {
     if (!this.session || !this.vehicle) return;
     const ses = this.session;
     if (ses.lesson) {
-      this.spawnAt(ses.lesson.spawn());
-      ses.onReset();
+      if (ses.lessonRetry) this.retryLesson();
+      else void this.startEvent();
       return;
     }
     const t = this.world.track;
@@ -507,6 +549,14 @@ export class Game {
     this.spawnAt({ s: back, d, speed: 0 });
     ses.onReset();
     ses.toast("Car reset", "info", 1.4);
+  }
+
+  retryLesson() {
+    const spawn = this.session?.retryLesson();
+    if (spawn) {
+      this.spawnAt(spawn);
+      this.input.clearEdges();
+    }
   }
 
   pause() {
@@ -673,6 +723,14 @@ export class Game {
     this.cameraRig.setLookBack(this.input.lookBack);
 
     const v = this.vehicle;
+    if (this.multiplayer.room?.phase === "countdown" && this.session && this.multiplayer.countdown > 0) {
+      this.session.phase = "countdown";
+      this.session.countdown = this.multiplayer.countdown;
+    }
+    if (this.multiplayer.room?.phase === "practice" && this.session?.phase === "countdown") {
+      this.session.phase = "running";
+      this.session.countdown = 0;
+    }
     const frameStart = performance.now();
     this.profMark = frameStart;
     if (driving && !ui.paused && v && this.session) {
@@ -684,11 +742,12 @@ export class Game {
         const c = this.session.controls(input, PHYSICS_DT);
         v.step(c);
         const req = this.session.step(PHYSICS_DT);
+        this.acc -= PHYSICS_DT;
+        steps++;
         if (req === "reset") this.resetCar();
         else if (req) this.spawnAt(req);
         this.currPose = capturePose(v, this.currPose ?? undefined);
-        this.acc -= PHYSICS_DT;
-        steps++;
+        if (req) break;
       }
       if (steps >= 30) this.acc = 0;
       this.prof.steps = steps;
@@ -733,6 +792,8 @@ export class Game {
     }
 
     // World updates
+    this.multiplayer.update(dt, driving ? v : null, this.session ? this.session.s / this.world.track.length : 0);
+    this.opponents?.update(this.multiplayer.store.get().peers, dt, v?.pos ?? cam.position);
     this.env.update(v && driving ? v.pos : cam.position);
     this.terrain.update(cam.position, this.renderer.quality.lodBias);
     this.vegetation.update(cam.position, this.time, this.conditions.weather === "wet" ? 1.6 : 1);
@@ -813,6 +874,7 @@ export class Game {
       targets: null,
       camera: "Chase",
       wrongSurface: false,
+      nitro: { enabled: false, charge: 1, active: false },
     };
   }
 
@@ -845,7 +907,7 @@ export class Game {
       ? { total: s.drift.total, combo: Math.round(s.drift.combo), mult: s.drift.multiplier, angle: s.drift.angle, active: s.drift.active, zone: s.drift.currentZone?.name ?? null }
       : null;
     const l = s.lesson;
-    h.lesson = l ? { title: l.title, steps: l.steps, step: l.step, prompt: l.prompt, tip: this.settings.learning.tips ? l.tip : "", progress: l.progress } : null;
+    h.lesson = l ? { title: l.title, steps: l.steps, step: l.step, prompt: l.prompt, tip: this.settings.learning.tips ? l.tip : "", progress: l.progress, retry: !!s.lessonRetry } : null;
     h.toasts = s.toasts;
     h.assists = { abs: t.absActive, tc: t.tcActive, esc: t.escActive };
     h.inputs = { throttle: t.throttle, brake: t.brake, steer: t.steer, handbrake: t.handbrake };
@@ -859,6 +921,7 @@ export class Game {
     h.targets = s.targets;
     h.camera = CAMERA_LABELS[this.cameraRig.mode];
     h.wrongSurface = t.wheelsOnRoad === 0 && t.wheelsOnGround > 0;
+    h.nitro = { enabled: v.nitro.enabled, charge: v.nitro.charge, active: v.nitro.active };
     tmpV.set(0, 0, 0);
   }
 
@@ -871,6 +934,8 @@ export class Game {
   }
 
   dispose() {
+    this.multiplayer.leave();
+    this.opponents?.dispose();
     this.disposed = true;
     cancelAnimationFrame(this.raf);
     this.input.detach();

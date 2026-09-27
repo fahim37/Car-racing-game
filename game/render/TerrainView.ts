@@ -84,8 +84,9 @@ vec4 w0 = max(vSplat, 0.0);
 vec3 terr = vec3(0.0);
 vec4 w = vec4(0.0);
 if (w0.x > 0.02) {
-  vec3 c = antiTile(tGrass, wuv / 6.0) * vec3(0.62, 0.92, 0.42);
-  c = mix(c, c * vec3(0.85, 1.06, 0.8), smoothstep(0.35, 0.7, texture2D(tGrass, wuv / 90.0).r));
+  vec3 c = antiTile(tGrass, wuv / 3.8) * vec3(0.68, 0.94, 0.49);
+  float meadow = texture2D(tGrass, wuv / 55.0).r;
+  c *= mix(vec3(0.82, 1.02, 0.78), vec3(1.12, 1.02, 0.88), smoothstep(0.2, 0.65, meadow));
   w.x = pow(w0.x * (dot(c, vec3(0.33)) * 0.6 + 0.4), 2.0);
   terr += c * w.x;
 }

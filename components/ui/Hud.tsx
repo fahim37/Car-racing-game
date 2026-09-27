@@ -102,7 +102,7 @@ export function Hud({ game, touch }: { game: Game; touch: boolean }) {
             )}
           </div>
         )}
-        {h.kind === "free" && (
+        {h.kind === "free" && !game.multiplayer.room && (
           <div className="chip timing" style={{ minWidth: 0 }}>
             <div className="eyebrow" style={{ fontSize: 11 }}>
               Free Drive
@@ -125,6 +125,7 @@ export function Hud({ game, touch }: { game: Game; touch: boolean }) {
             </div>
             <div className="p">{h.lesson.prompt}</div>
             {h.lesson.tip && <div className="tip">{h.lesson.tip}</div>}
+            {h.lesson.retry && <button className="btn small lesson-retry" onClick={() => game.retryLesson()}>Retry lesson section</button>}
             <div className="progress">
               <div style={{ width: `${Math.round(h.lesson.progress * 100)}%` }} />
             </div>
@@ -212,6 +213,10 @@ export function Hud({ game, touch }: { game: Game; touch: boolean }) {
             <span className={h.assists.tc ? "on" : ""}>TC</span>
             <span className={h.assists.esc ? "on" : ""}>ESC</span>
           </div>
+          {h.nitro.enabled && <div className={`nitro-meter ${h.nitro.active ? "boosting" : ""}`}>
+            <div className="nitro-label"><span>{h.nitro.active ? "BOOST" : "NITRO"}</span><span>{touch ? "Hold Nitro + Gas" : "Hold N + accelerate"}</span></div>
+            <div role="progressbar" aria-label="Nitro charge" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(h.nitro.charge * 100)}><i style={{ width: `${h.nitro.charge * 100}%` }} /></div>
+          </div>}
         </div>
       </div>
     </div>

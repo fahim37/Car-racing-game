@@ -72,6 +72,7 @@ export class Session {
   private toastId = 0;
   readonly drift: DriftScorer;
   readonly lesson: Lesson | null;
+  lessonRetry: Spawn | null = null;
   private recorder = new GhostRecorder();
   private lapGhost: GhostData | null = null;
   private bestGhost: GhostData | null = null;
@@ -186,6 +187,8 @@ export class Session {
 
   onReset() {
     this.resets++;
+    this.waterTime = 0;
+    this.flipped = 0;
     if (this.lapStarted) {
       if (this.lapValid) this.toast("Lap invalidated by reset", "bad");
       this.lapValid = false;
@@ -226,8 +229,8 @@ export class Session {
     const contact = v.stepsSinceContact < 2;
 
     // Safety: water, rollover.
-    this.waterTime = t.inWater ? this.waterTime + dt : 0;
-    this.flipped = t.upright < 0.35 ? this.flipped + dt : 0;
+    this.waterTime = t.inWater && !paved ? this.waterTime + dt : 0;
+    this.flipped = t.upright < 0.2 && t.speed < 2 ? this.flipped + dt : 0;
     if (this.waterTime > 1.2 || this.flipped > 2.5) {
       this.toast(this.waterTime > 1.2 ? "Into the lake. Resetting on the road" : "Rolled over. Resetting on the road", "bad");
       this.waterTime = 0;
@@ -427,6 +430,13 @@ export class Session {
     const l = this.lesson!;
     const v = this.vehicle;
     l.flash = null;
+    if (this.lessonRetry) return null;
+    // Leaving the asphalt is recoverable: the player keeps driving and rejoins naturally.
+    if (offRoad) {
+      l.prompt = l.padLesson ? "Off the practice pad. Ease off and drive back onto the paved area." : "Off the road. Ease off and steer gently back onto the track.";
+      l.tip = "Grip is lower here. Avoid sudden steering and rejoin when it is safe.";
+      return null;
+    }
     l.update({
       v,
       track: this.world.track,
@@ -442,18 +452,25 @@ export class Session {
       dt,
     });
     const flash = l.flash as Flash | null;
-    if (flash) this.toast(flash.text, flash.good ? "good" : "bad", flash.good ? 2.6 : 3.6);
+    if (flash && !l.respawn) this.toast(flash.text, flash.good ? "good" : "bad", flash.good ? 2.6 : 3.6);
     if (l.result === "success") {
       this.finish(flash?.text ?? "Lesson complete.");
       return null;
     }
     if (l.respawn) {
-      const sp = l.respawn;
+      this.lessonRetry = l.respawn;
       l.respawn = null;
-      if (l.padLesson) this.drift.combo = 0;
-      return sp;
+      l.prompt = flash?.text ?? "This attempt needs another try.";
+      l.tip = "You can keep driving. Choose Retry when you are ready for another attempt.";
     }
     return null;
+  }
+
+  retryLesson(): Spawn | null {
+    const spawn = this.lessonRetry;
+    this.lessonRetry = null;
+    if (spawn) this.onReset();
+    return spawn;
   }
 
   finish(message = "") {

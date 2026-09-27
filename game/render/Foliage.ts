@@ -270,11 +270,12 @@ function buildFir(seed: number, height: number, opts: { crownBase: number; crown
   const crownBase = height * opts.crownBase;
   const centre = new THREE.Vector3(0, height * 0.42, 0);
   const trunkR = height * 0.024;
-  for (let h = crownBase; h < height * 0.97; h += opts.spacing * (0.85 + r() * 0.3)) {
+  let whorl = 0;
+  for (let h = crownBase; h < height * 0.97; h += opts.spacing * (0.8 + r() * 0.4)) {
     const rel = (h - crownBase) / (height - crownBase);
     const L = opts.crownR * height * Math.pow(1 - rel, 0.92) * (0.8 + r() * 0.35) + 0.35;
     const count = rel > 0.8 ? 3 : 4 + Math.floor(r() * 3);
-    const az0 = r() * Math.PI * 2;
+    const az0 = whorl++ * 2.39996 + r() * 0.5;
     for (let k = 0; k < count; k++) {
       const az = az0 + (k / count) * Math.PI * 2 + (r() - 0.5) * 0.5;
       const dir = new THREE.Vector3(Math.cos(az), 0, Math.sin(az));
@@ -283,22 +284,31 @@ function buildFir(seed: number, height: number, opts: { crownBase: number; crown
       dir.normalize();
       const side = new THREE.Vector3().crossVectors(UP, dir).normalize();
       const upv = new THREE.Vector3().crossVectors(dir, side).normalize();
-      const base = new THREE.Vector3(0, h, 0).addScaledVector(dir, trunkR * (1 - h / height));
-      const tip = base.clone().addScaledVector(dir, L);
-      const W = Math.max(0.35, L * 0.5);
-      const roll = (r() - 0.5) * 0.5;
+      const base = new THREE.Vector3(0, h + (r() - 0.5) * opts.spacing * 0.8, 0).addScaledVector(dir, trunkR * (1 - h / height));
+      const tip = base.clone().addScaledVector(dir, L * (0.85 + r() * 0.25));
+      tip.y += L * 0.12;
+      const mid = base.clone().lerp(tip, 0.52).addScaledVector(UP, -L * 0.09);
+      const W = Math.max(0.32, L * (0.68 + r() * 0.15));
+      const roll = (r() - 0.5) * 0.85;
       const across = side.clone().multiplyScalar(Math.cos(roll)).addScaledVector(upv, Math.sin(roll));
-      const aoBase = 0.55 + 0.2 * rel;
-      const aoTip = 0.85 + 0.15 * rel;
-      // Horizontal card
-      const p = [base.clone().addScaledVector(across, -W * 0.5), tip.clone().addScaledVector(across, -W * 0.5), tip.clone().addScaledVector(across, W * 0.5), base.clone().addScaledVector(across, W * 0.5)];
-      const n = p.map((q) => canopyNormal(q, centre));
-      b.quad(p, [[0, 0], [1, 0], [1, 1], [0, 1]], n, [aoBase, aoTip, aoTip, aoBase]);
+      const aoBase = 0.66 + 0.15 * rel;
+      const aoTip = 0.9 + 0.1 * rel;
+      // Arch each bough and taper its tip instead of stacking flat rectangular shelves.
+      const stations = [base, mid, tip];
+      const widths = [W * 0.43, W * 0.5, W * 0.18];
+      for (let segment = 0; segment < 2; segment++) {
+        const p = [stations[segment].clone().addScaledVector(across, -widths[segment]), stations[segment + 1].clone().addScaledVector(across, -widths[segment + 1]), stations[segment + 1].clone().addScaledVector(across, widths[segment + 1]), stations[segment].clone().addScaledVector(across, widths[segment])];
+        const u0 = segment * 0.5;
+        const u1 = (segment + 1) * 0.5;
+        const shade0 = THREE.MathUtils.lerp(aoBase, aoTip, u0);
+        const shade1 = THREE.MathUtils.lerp(aoBase, aoTip, u1);
+        b.quad(p, [[u0, 0], [u1, 0], [u1, 1], [u0, 1]], p.map((q) => canopyNormal(q, centre)), [shade0, shade1, shade1, shade0]);
+      }
       // Vertical card for volume from the side
-      const vW = W * 0.55;
+      const vW = W * 0.78;
       const across2 = upv.clone().multiplyScalar(Math.cos(roll)).addScaledVector(side, -Math.sin(roll));
       const p2 = [base.clone().addScaledVector(across2, -vW * 0.5), tip.clone().addScaledVector(across2, -vW * 0.5), tip.clone().addScaledVector(across2, vW * 0.5), base.clone().addScaledVector(across2, vW * 0.5)];
-      b.quad(p2, [[0, 0.22], [1, 0.22], [1, 0.78], [0, 0.78]], p2.map((q) => canopyNormal(q, centre)), [aoBase, aoTip, aoTip, aoBase]);
+      b.quad(p2, [[0, 0], [1, 0], [1, 1], [0, 1]], p2.map((q) => canopyNormal(q, centre)), [aoBase, aoTip, aoTip, aoBase]);
     }
   }
   // Leader at the top.
@@ -319,14 +329,15 @@ function buildBroadleaf(seed: number, height: number) {
   const rx = height * (0.2 + r() * 0.06);
   const ry = height * (0.3 + r() * 0.05);
   const card = height * 0.26;
-  const clusters = 70;
+  const clusters = 90;
   for (let i = 0; i < clusters; i++) {
     // Points on/inside an ellipsoid, denser near the surface.
     const u = r() * 2 - 1;
     const a = r() * Math.PI * 2;
     const rr = Math.pow(r(), 0.35);
     const dirv = new THREE.Vector3(Math.sqrt(1 - u * u) * Math.cos(a), u, Math.sqrt(1 - u * u) * Math.sin(a));
-    const p = new THREE.Vector3(centre.x + dirv.x * rx * rr, centre.y + dirv.y * ry * rr, centre.z + dirv.z * rx * rr);
+    const lobe = 0.82 + 0.18 * Math.sin(a * 3 + u * 2);
+    const p = new THREE.Vector3(centre.x + dirv.x * rx * rr * lobe + u * height * 0.04, centre.y + dirv.y * ry * rr, centre.z + dirv.z * rx * rr * lobe);
     // Card facing roughly outwards, random spin.
     const n = dirv.clone().addScaledVector(UP, 0.3).normalize();
     const t1 = new THREE.Vector3().crossVectors(n, Math.abs(n.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : UP).normalize();
@@ -396,7 +407,8 @@ function foliageMaterial(map: THREE.Texture, color: number) {
   return new THREE.MeshStandardMaterial({
     map,
     color,
-    alphaTest: 0.42,
+    alphaTest: 0.32,
+    alphaToCoverage: true,
     side: THREE.DoubleSide,
     vertexColors: true,
     roughness: 0.82,
@@ -440,6 +452,16 @@ export async function buildFoliageModels(): Promise<Map<string, FoliageModel>> {
   models.set("bush:0", { parts: [{ geometry: buildBush(41, 1.1), material: leafMats[1] }], height: 1.1, radius: 0.8 });
   const fernMat = foliageMaterial(fernTex, 0x9fbf82);
   for (let v = 0; v < 3; v++) models.set(`bushes:${v}`, { parts: [{ geometry: buildFern(61 + v * 13, 0.7), material: fernMat }], height: 0.7, radius: 0.8 });
+  // Fit distant sprites to the actual crown, including outlying leaves and branch tips.
+  for (const model of models.values()) {
+    const bounds = new THREE.Box3();
+    for (const part of model.parts) {
+      part.geometry.computeBoundingBox();
+      bounds.union(part.geometry.boundingBox!);
+    }
+    model.height = bounds.max.y + 0.08;
+    model.radius = Math.max(Math.abs(bounds.min.x), Math.abs(bounds.max.x), Math.abs(bounds.min.z), Math.abs(bounds.max.z)) + 0.08;
+  }
   return models;
 }
 

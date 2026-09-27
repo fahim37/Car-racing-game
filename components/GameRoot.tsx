@@ -3,10 +3,19 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { Game, UIState } from "@/game/Game";
 import { UI } from "./ui/UI";
+import { requestGameFullscreen } from "@/game/util/fullscreen";
 
 export default function GameRoot() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [game, setGame] = useState<Game | null>(null);
+  const fullscreenAttempted = useRef(false);
+
+  useEffect(() => {
+    const landscape = window.matchMedia("(orientation: landscape)");
+    const onRotate = () => { fullscreenAttempted.current = false; };
+    landscape.addEventListener("change", onRotate);
+    return () => landscape.removeEventListener("change", onRotate);
+  }, []);
 
   useEffect(() => {
     let g: Game | null = null;
@@ -29,7 +38,11 @@ export default function GameRoot() {
   }, []);
 
   return (
-    <div className="game-root">
+    <div className="game-root" onPointerUpCapture={(event) => {
+      if (event.pointerType !== "touch" || fullscreenAttempted.current || !window.matchMedia("(orientation: landscape)").matches) return;
+      fullscreenAttempted.current = true;
+      void requestGameFullscreen();
+    }}>
       <canvas ref={canvasRef} className="game-canvas" />
       {game ? <Connected game={game} /> : <div className="loading-screen"><div className="loading-title">Larchmere</div></div>}
     </div>

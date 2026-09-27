@@ -55,6 +55,10 @@ export function Help({ game }: { game: Game }) {
               <b>Touch:</b> slide on the left half of the screen to steer (or choose tilt / buttons in Settings), pedals on the right, with pause, camera and reset at the top. Hold the device in landscape.
               <br />
               <b>Automatic gearbox:</b> hold brake at a standstill to reverse. <b>Wheels:</b> calibrate once in Settings → Controls.
+              <br />
+              <b>Nitro:</b> in Free Drive and Multiplayer, hold N / right Shift / RB while accelerating, or hold Nitro + Gas on mobile. Five seconds of boost recharge after a short cooldown.
+              <br />
+              <b>Multiplayer:</b> host a room from the main menu and share its six-character code or invitation link. The host starts a one-lap race once everyone is ready. Online cars do not collide.
             </p>
           </div>
         ) : (

@@ -7,7 +7,7 @@ export function PauseMenu({ game }: { game: Game }) {
   return (
     <div className="overlay" onClick={(e) => e.target === e.currentTarget && game.resume()}>
       <div className="panel modal" role="dialog" aria-label="Paused">
-        <div className="eyebrow">Paused</div>
+        <div className="eyebrow">{game.multiplayer.room ? "Menu · online race continues" : "Paused"}</div>
         <h2>{name}</h2>
         <button className="btn primary" autoFocus onClick={() => game.resume()}>
           Resume <span className="kbd" style={{ background: "rgba(0,0,0,0.15)", borderColor: "rgba(0,0,0,0.2)" }}>Esc</span>

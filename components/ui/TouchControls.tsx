@@ -2,6 +2,7 @@
 
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import type { Game } from "@/game/Game";
+import { requestGameFullscreen } from "@/game/util/fullscreen";
 
 function Pedal({ className, label, onChange, style }: { className: string; label: string; onChange: (v: number) => void; style?: CSSProperties }) {
   const [on, setOn] = useState(false);
@@ -40,7 +41,7 @@ export function TouchControls({ game }: { game: Game }) {
   useEffect(() => {
     input.setTouch({ active: true });
     if (mode === "tilt") void input.enableTilt();
-    return () => input.setTouch({ active: false, steer: 0, throttle: 0, brake: 0, handbrake: 0 });
+    return () => input.setTouch({ active: false, steer: 0, throttle: 0, brake: 0, handbrake: 0, nitro: false });
   }, [input, mode]);
 
   const endSlide = () => {
@@ -100,8 +101,12 @@ export function TouchControls({ game }: { game: Game }) {
       <Pedal className="throttle" label="Gas" onChange={(v) => input.setTouch({ throttle: v })} />
       <Pedal className="brake" label="Brake" onChange={(v) => input.setTouch({ brake: v })} />
       <Pedal className="handbrake" label="Hand" onChange={(v) => input.setTouch({ handbrake: v })} />
+      {game.vehicle?.nitro.enabled && <Pedal className="nitro-pedal" label="Nitro" onChange={(v) => input.setTouch({ nitro: !!v })} />}
 
       <div className="top-btns">
+        <button className="icon-btn fullscreen-btn" aria-label="Enter fullscreen" onClick={() => { void requestGameFullscreen(); }}>
+          ⛶
+        </button>
         <button className="icon-btn" aria-label="Pause" onClick={() => game.pause()}>
           ❚❚
         </button>

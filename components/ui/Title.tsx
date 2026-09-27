@@ -32,7 +32,11 @@ export function Title({ game }: { game: Game }) {
           )}
           <button className="menu-item" onClick={() => brief("free")}>
             <span>Free Drive</span>
-            <small>no timer, no pressure</small>
+            <small>explore with nitro boost</small>
+          </button>
+          <button className="menu-item" onClick={() => game.go("multiplayer")}>
+            <span>Multiplayer</span>
+            <small>host a room or join with a code</small>
           </button>
           <button className="menu-item" onClick={() => open("academy")}>
             <span>Driving Academy</span>

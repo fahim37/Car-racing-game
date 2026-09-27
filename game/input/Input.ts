@@ -7,6 +7,7 @@ export type Action =
   | "left"
   | "right"
   | "handbrake"
+  | "nitro"
   | "shiftUp"
   | "shiftDown"
   | "camera"
@@ -21,6 +22,7 @@ export const ACTION_LABELS: Record<Action, string> = {
   left: "Steer left",
   right: "Steer right",
   handbrake: "Handbrake",
+  nitro: "Nitro boost",
   shiftUp: "Shift up",
   shiftDown: "Shift down",
   camera: "Change camera",
@@ -36,6 +38,7 @@ export const DEFAULT_KEYS: Record<Action, string[]> = {
   left: ["KeyA", "ArrowLeft"],
   right: ["KeyD", "ArrowRight"],
   handbrake: ["Space"],
+  nitro: ["KeyN", "ShiftRight"],
   shiftUp: ["KeyE", "ShiftLeft"],
   shiftDown: ["KeyQ", "ControlLeft"],
   camera: ["KeyC"],
@@ -51,6 +54,7 @@ export const GAMEPAD_LABELS: Partial<Record<Action, string>> = {
   left: "Left stick",
   right: "Left stick",
   handbrake: "A",
+  nitro: "RB",
   shiftUp: "B",
   shiftDown: "X",
   camera: "Y",
@@ -100,6 +104,7 @@ export interface TouchState {
   throttle: number;
   brake: number;
   handbrake: number;
+  nitro: boolean;
 }
 
 const EDGE_ACTIONS: Action[] = ["shiftUp", "shiftDown", "camera", "pause", "restart", "reset"];
@@ -107,7 +112,7 @@ const EDGE_ACTIONS: Action[] = ["shiftUp", "shiftDown", "camera", "pause", "rest
 export class Input {
   settings: InputSettings = { ...DEFAULT_INPUT_SETTINGS };
   source: InputSource = "keyboard";
-  readonly touch: TouchState = { active: false, steer: 0, throttle: 0, brake: 0, handbrake: 0 };
+  readonly touch: TouchState = { active: false, steer: 0, throttle: 0, brake: 0, handbrake: 0, nitro: false };
   private keys = new Set<string>();
   private pressedEdges = new Set<Action>();
   private padPrev: boolean[] = [];
@@ -218,6 +223,7 @@ export class Input {
 
   /** Samples all devices; call once per frame. */
   poll(out: DriverControls, dt: number) {
+    let nitro = this.key("nitro");
     let steer = 0;
     let throttle = 0;
     let brake = 0;
@@ -276,6 +282,7 @@ export class Input {
         digitalSteer = false;
         digitalPedals = false;
         this.lookBack = this.lookBack || (pad.buttons[4]?.pressed ?? false);
+        nitro ||= pad.buttons[5]?.pressed ?? false;
       }
       this.handleButtons(pad, 1, dt);
       break;
@@ -315,6 +322,7 @@ export class Input {
     out.throttle = clamp(throttle, 0, 1);
     out.brake = clamp(brake, 0, 1);
     out.handbrake = clamp(handbrake, 0, 1);
+    out.nitro = nitro || (this.touch.active && this.touch.nitro);
     out.digitalSteer = digitalSteer;
     out.digitalPedals = digitalPedals;
     if (this.consume("shiftUp")) out.shiftUp = true;

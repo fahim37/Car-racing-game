@@ -12,6 +12,7 @@ import { SettingsView } from "./Settings";
 import { Title } from "./Title";
 import { TouchControls } from "./TouchControls";
 import { useIsTouch } from "./useIsTouch";
+import { MultiplayerHud, MultiplayerLobby } from "./Multiplayer";
 
 export function UI({ game, state }: { game: Game; state: UIState }) {
   const touch = useIsTouch();
@@ -44,9 +45,11 @@ export function UI({ game, state }: { game: Game; state: UIState }) {
       {s === "events" && <EventsScreen game={game} state={state} />}
       {s === "briefing" && <Briefing game={game} state={state} />}
       {s === "garage" && <Garage game={game} state={state} />}
+      {s === "multiplayer" && <MultiplayerLobby game={game} />}
       {s === "driving" && (
         <>
           <Hud game={game} touch={touch} />
+          {!state.paused && <MultiplayerHud game={game} />}
           {touch && !state.paused && !state.showResults && <TouchControls game={game} />}
           {!touch && !state.paused && !state.showResults && (
             <button className="icon-btn pause-btn" style={{ top: "auto", bottom: 16, right: "auto", left: "50%", transform: "translateX(-50%)", position: "absolute", opacity: 0.6 }} aria-label="Pause" onClick={() => game.pause()}>

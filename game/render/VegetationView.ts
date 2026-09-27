@@ -54,6 +54,13 @@ transformed.x += sway * hgt * hgt * 0.04;
 transformed.z += sway * hgt * hgt * 0.025;
 transformed.xyz += normal * sin(uTime * 4.0 + ph * 5.0 + transformed.y * 2.0) * ${(strength * 0.4).toFixed(4)} * uWind * hgt * 0.02;`,
       );
+    if (m.alphaTest > 0) {
+      // Canopy normals describe the whole crown, not the front/back of each leaf card.
+      shader.fragmentShader = shader.fragmentShader.replace(
+        "#include <normal_fragment_begin>",
+        "#include <normal_fragment_begin>\n#ifdef DOUBLE_SIDED\nnormal *= faceDirection;\n#endif",
+      );
+    }
   };
   m.customProgramCacheKey = () => `wind-${key}`;
 }
@@ -189,16 +196,16 @@ export class VegetationView {
   }
 
   private buildImpostor(renderer: THREE.WebGLRenderer, species: Species, model: Model, plants: Plant[]) {
-    const W = 256;
-    const H = 512;
-    const rt = new THREE.WebGLRenderTarget(W * 2, H, { samples: 0, colorSpace: THREE.NoColorSpace });
+    const W = 384;
+    const H = 768;
+    const rt = new THREE.WebGLRenderTarget(W * 2, H, { samples: 4, colorSpace: THREE.NoColorSpace });
     rt.texture.generateMipmaps = true;
     rt.texture.minFilter = THREE.LinearMipmapLinearFilter;
     const scene = new THREE.Scene();
     const group = new THREE.Group();
     for (const p of model.parts) {
       const src = p.material as THREE.MeshStandardMaterial;
-      const mat = new THREE.MeshBasicMaterial({ map: src.map, color: src.color, alphaTest: 0.45, side: THREE.DoubleSide, transparent: false, vertexColors: !!src.vertexColors });
+      const mat = new THREE.MeshBasicMaterial({ map: src.map, color: src.color, alphaTest: 0.32, alphaToCoverage: true, side: THREE.DoubleSide, transparent: false, vertexColors: !!src.vertexColors });
       group.add(new THREE.Mesh(p.geometry, mat));
     }
     scene.add(group);
@@ -246,7 +253,7 @@ export class VegetationView {
     geo.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
     geo.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
     geo.setIndex(idx);
-    const mat = new THREE.MeshStandardMaterial({ map: rt.texture, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.95 });
+    const mat = new THREE.MeshStandardMaterial({ map: rt.texture, alphaTest: 0.3, alphaToCoverage: true, side: THREE.DoubleSide, roughness: 0.95 });
     const u = this.impostorUniforms;
     mat.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, u);

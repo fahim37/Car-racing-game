@@ -3,15 +3,18 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node server/start.mjs --dev",
     "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
+    "start": "node server/start.mjs",
+    "lint": "eslint",
+    "test": "node --import tsx --test tests/steering-lesson.test.ts tests/nitro.test.ts tests/multiplayer.test.mjs"
   },
   "dependencies": {
     "next": "16.3.6",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "socket.io": "^4.8.4",
+    "socket.io-client": "^4.8.4",
     "three": "^0.186.1"
   },
   "devDependencies": {

@@ -5,6 +5,7 @@ import { CircleCollider, GroundHit, World, WATER_Y } from "../world/World";
 import { CarSpec, torqueAt } from "./carSpecs";
 import { Surface, SurfaceProps, surfaceProps } from "./surfaces";
 import { TyreOutput, loadedMu, tyreForce } from "./tire";
+import { Nitro } from "./Nitro";
 
 export const PHYSICS_HZ = 240;
 export const PHYSICS_DT = 1 / PHYSICS_HZ;
@@ -16,6 +17,7 @@ export interface DriverControls {
   brake: number; // 0..1
   steer: number; // -1 (left) .. 1 (right)
   handbrake: number; // 0..1
+  nitro?: boolean;
   shiftUp: boolean;
   shiftDown: boolean;
   /** On/off steering (keys, touch buttons) is rate-limited like a smooth pair of hands. */
@@ -133,6 +135,7 @@ export class Vehicle {
   readonly track: Track;
   assists: DrivingAssists = { ...DEFAULT_ASSISTS };
   wetness = 0;
+  readonly nitro = new Nitro();
 
   // Rigid body
   readonly pos = new Vector3();
@@ -464,6 +467,7 @@ export class Vehicle {
     let throttle = reversing ? this.brakeState : this.throttleState;
     const brake = reversing ? this.throttleState : this.brakeState;
     const handbrake = this.handbrakeState;
+    const boosting = this.nitro.step(dt, !!c.nitro, this.gear > 0 && throttle > 0.2 && brake < 0.1 && handbrake < 0.1 && this.telemetry.wheelsOnGround >= 2 && !this.telemetry.inWater && this.up.y > 0.5);
 
     // ---- steering geometry
     const speed = this.vel.length();
@@ -551,7 +555,7 @@ export class Vehicle {
       this.telemetry.limiter = limiter;
     }
     this.rpm = clamp(this.rpm, eng.idle * 0.9, eng.limiter + 200);
-    const shaftTorque = engineTorque * ratio * (engineTorque >= 0 ? spec.efficiency : 1);
+    const shaftTorque = engineTorque * ratio * (engineTorque >= 0 ? spec.efficiency * (boosting ? 1.7 : 1) : 1);
     const engineInertia = clutchEngaged ? eng.inertia * ratio * ratio : 0;
 
     // ---- distribute drive torque (differentials)

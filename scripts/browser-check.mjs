@@ -3,6 +3,7 @@
 import { chromium } from "playwright-core";
 import fs from "node:fs";
 import path from "node:path";
+import assert from "node:assert/strict";
 
 const out = process.argv[2] || "shots";
 const scenario = process.argv[3] || "basic";
@@ -15,7 +16,7 @@ const browser = await chromium.launch({
   headless: true,
   args: ["--enable-gpu", "--ignore-gpu-blocklist", "--use-angle=d3d11", "--enable-unsafe-webgpu", "--autoplay-policy=no-user-gesture-required"],
 });
-const mobile = scenario === "mobile";
+const mobile = scenario === "mobile" || scenario === "recovery";
 const context = await browser.newContext(
   mobile
     ? { viewport: { width: 844, height: 390 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true }
@@ -79,6 +80,55 @@ if (scenario === "mobile") {
   await page.evaluate(() => window.__game.pause());
   await page.waitForTimeout(500);
   await shot("m-pause");
+}
+
+if (scenario === "recovery") {
+  await page.getByRole("button", { name: /^Free Drive/ }).tap();
+  await page.waitForTimeout(500);
+  console.log("mobile fullscreen:", await page.evaluate(() => !!document.fullscreenElement));
+  for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }]) {
+    await page.setViewportSize(viewport);
+    await page.waitForTimeout(300);
+    const layout = await page.evaluate(() => {
+      const r = document.querySelector(".game-canvas").getBoundingClientRect();
+      return { width: r.width, height: r.height, viewportWidth: innerWidth, viewportHeight: innerHeight };
+    });
+    assert.ok(Math.abs(layout.width - layout.viewportWidth) < 2 && Math.abs(layout.height - layout.viewportHeight) < 2, JSON.stringify(layout));
+  }
+  await page.evaluate(() => window.__game.startEvent("lesson-steering", "meridian"));
+  assert.ok(await waitScreen("driving", 30000));
+  await page.evaluate(() => {
+    const g = window.__game;
+    g.session.lesson.step = 1;
+    g.spawnAt({ s: 300, d: -14, speed: 0 });
+  });
+  await page.waitForTimeout(2200);
+  const offroad = await page.evaluate(() => {
+    const g = window.__game;
+    return { d: g.session.d, wheels: g.vehicle.telemetry.wheelsOnRoad, retries: g.session.lesson.retries, prompt: g.session.lesson.prompt };
+  });
+  assert.equal(offroad.wheels, 0);
+  assert.equal(offroad.retries, 0);
+  assert.ok(Math.abs(offroad.d) > 10, JSON.stringify(offroad));
+  await shot("recovery-offroad-landscape");
+
+  await page.evaluate(() => {
+    const g = window.__game;
+    const t2 = g.world.track.corners.find((c) => c.short === "T2");
+    g.session.lesson.step = 2;
+    g.spawnAt({ s: t2.sStart - 35, d: 0, speed: 8 });
+  });
+  const retry = page.getByRole("button", { name: "Retry lesson section" });
+  await retry.waitFor({ state: "visible" });
+  const beforeRetry = await page.evaluate(() => window.__game.session.s);
+  await shot("recovery-manual-retry");
+  await retry.tap();
+  await page.waitForTimeout(300);
+  const afterRetry = await page.evaluate(() => ({ s: window.__game.session.s, pending: !!window.__game.session.lessonRetry }));
+  assert.ok(beforeRetry - afterRetry.s > 50, JSON.stringify({ beforeRetry, afterRetry }));
+  assert.equal(afterRetry.pending, false);
+  assert.equal(logs.filter((line) => line.startsWith("[pageerror]") || line.startsWith("[error]")).length, 0, logs.join("\n"));
+  console.log("off-road recovery, manual retry, and mobile viewport checks passed");
 }
 
 if (scenario === "basic") {

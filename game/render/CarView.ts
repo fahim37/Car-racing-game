@@ -56,6 +56,7 @@ export class CarView {
   private headMats: THREE.MeshStandardMaterial[] = [];
   private paintMats: THREE.MeshPhysicalMaterial[] = [];
   private headlight: THREE.SpotLight | null = null;
+  private boostFlames: THREE.Mesh[] = [];
   private cgZ = 0;
   private eye = new THREE.Vector3(0.36, 0.55, -0.2);
   private hood = new THREE.Vector3(0, 0.6, 0.8);
@@ -111,6 +112,16 @@ export class CarView {
   }
 
   private async init(paint: string, lite: boolean) {
+    if (!this.isGhost) {
+      for (const x of [-0.45, 0.45]) {
+        const flame = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.9, 6), new THREE.MeshBasicMaterial({ color: 0x67deff, transparent: true, opacity: 0.85, depthWrite: false }));
+        flame.rotation.x = -Math.PI / 2;
+        flame.position.set(x, -0.15, -this.spec.wheelbase / 2 - 1);
+        flame.visible = false;
+        this.root.add(flame);
+        this.boostFlames.push(flame);
+      }
+    }
     const gltf = await loadGLTF(`cars/${this.spec.model}${lite ? "_lite" : ""}.glb`);
     const src = gltf.scene;
     src.updateMatrixWorld(true);
@@ -231,7 +242,10 @@ export class CarView {
       w.pivot.rotation.x = (pose.spin[i] * rPhys) / w.radius;
     }
     for (const m of this.brakeMats) m.emissiveIntensity = pose.brake > 0.05 ? 3.2 : this.lightsOn ? 1 : 0.25;
-    void vehicle;
+    for (const flame of this.boostFlames) {
+      flame.visible = vehicle.nitro.active;
+      flame.scale.y = 0.85 + Math.sin(performance.now() * 0.05) * 0.2;
+    }
   }
 
   dispose() {
