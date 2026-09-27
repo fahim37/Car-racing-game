@@ -172,6 +172,7 @@ export class Session {
   }
 
   toast(text: string, kind: Toast["kind"] = "info", seconds = 2.6) {
+    if (this.toasts.some((toast) => toast.text === text && toast.kind === kind && toast.until > this.time)) return;
     this.toasts.push({ id: ++this.toastId, text, kind, until: this.time + seconds });
     if (this.toasts.length > 4) this.toasts.shift();
   }

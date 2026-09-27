@@ -79,14 +79,14 @@ export abstract class Lesson {
 
 class SteeringLesson extends Lesson {
   title = "Smooth Hands";
-  steps = ["Accelerate to 70 km/h", "Follow the line through the Lakeshore Sweep", "Brake to a stop before the 150 board"];
+  steps = ["Accelerate to 70 km/h", "Follow the line through the Lakeshore Sweep", "Brake to a stop before the 50 board"];
   private t1 = this.corner("T1");
   private t2 = this.corner("T2");
   spawn(): Spawn {
     return { s: this.track.length - 60, d: -1.5, speed: 0 };
   }
   update(c: LessonCtx) {
-    const stopZoneEnd = this.t2.sStart - 150;
+    const stopZoneEnd = this.t2.sStart - 50;
     if (this.step === 0) {
       this.prompt = "Hold W / ↑ / RT to accelerate. Keep the car pointed along the road.";
       this.tip = "Tap A/D (or use the stick) gently. Small inputs are all you need at speed.";
@@ -105,17 +105,18 @@ class SteeringLesson extends Lesson {
         this.good("Clean line through the sweep!");
       }
     } else if (this.step === 2) {
-      this.prompt = "Brake smoothly to a complete stop before the 150 m board ahead.";
-      this.tip = "Press firmly at first, then ease off as the car slows to stop gently.";
+      this.prompt = "Brake smoothly to a complete stop before the 50 m board ahead.";
+      this.tip = "Start near the 150 m board. Press firmly at first, then ease off as the car slows.";
       const remaining = this.track.delta(c.s, stopZoneEnd);
+      const retry = { s: this.t1.sEnd + 20, d: 0, speed: 70 / 3.6 };
       this.progress = 2 / 3 + (1 - Math.min(1, c.kmh / 90)) / 3;
       if (c.kmh < 2 && remaining > -2) {
         this.result = "success";
         this.good("Stopped in the zone. You're ready for braking into corners.");
       } else if (remaining < -2 && c.kmh > 3) {
-        this.fail("You passed the board. Start braking earlier, with a firm first press.", { s: this.t1.sEnd + 25, d: 0, speed: 85 / 3.6 });
+        this.fail("You passed the board. Start braking earlier, with a firm first press.", retry);
       } else if (c.offRoad) {
-        this.fail("Off the road. Keep the wheel straight while braking.", { s: this.t1.sEnd + 25, d: 0, speed: 85 / 3.6 });
+        this.fail("Off the road. Keep the wheel straight while braking.", retry);
       }
     }
   }
