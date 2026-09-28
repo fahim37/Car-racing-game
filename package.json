@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "node server/start.mjs --dev",
-    "build": "next build",
-    "start": "node server/start.mjs",
+    "dev": "node init && node server/start.mjs --dev",
+    "build": "node init && next build",
+    "start": "node init && node server/start.mjs",
     "lint": "eslint",
     "test": "node --import tsx --test tests/steering-lesson.test.ts tests/nitro.test.ts tests/multiplayer.test.mjs"
   },

@@ -86,7 +86,7 @@ export function Help({ game }: { game: Game }) {
             </ul>
             <h4>Drifting</h4>
             <ul>
-              <li>Enter with some speed, turn in and break the rear loose with a firm throttle (rear-wheel drive), a lift and flick, or a quick handbrake tap.</li>
+              <li>Enter with some speed, turn in and break the rear loose with a quick handbrake tap, a lift and flick, or a firm throttle (most of the power goes to the rear wheels).</li>
               <li>Hold the angle with the throttle: more throttle, more angle; too much and you spin. Keep a little countersteer and adjust in small movements.</li>
               <li>Exit by gently reducing angle and straightening up. Drifting scores points in drift events, but grip driving is faster against the clock.</li>
             </ul>

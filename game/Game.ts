@@ -85,6 +85,12 @@ export interface Hud {
   nitro: { enabled: boolean; charge: number; active: boolean };
   /** 0..1 slipstream behind an online rival. */
   draft: number;
+  /** Online: the other drivers on the map. */
+  rivals: { x: number; z: number; color: string; leader: boolean }[];
+  /** Online: your colour in the room. */
+  carColor: string | null;
+  /** Online race: who leads, and where you stand. */
+  race: { leaderName: string; leaderColor: string; winner: boolean; youLead: boolean; place: number; total: number; finished: boolean; gapM: number } | null;
 }
 
 const tmpV = new THREE.Vector3();
@@ -878,38 +884,49 @@ export class Game {
     this.raceCallouts();
   }
 
-  private mpRace = { raceId: -1, place: 0, pending: 0, since: 0, finished: false };
+  private mpRace = { raceId: -1, place: 0, leader: "", pending: "", since: 0, finished: false };
 
-  /** Toasts for overtakes, being passed and the finish. */
+  /** Toasts for lead changes, overtakes, being passed and the finish. */
   private raceCallouts() {
     const net = this.multiplayer.store.get();
     const room = net.room;
     const ses = this.session;
     if (!room || !ses) return;
     const m = this.mpRace;
-    if (room.raceId !== m.raceId) Object.assign(m, { raceId: room.raceId, place: 0, pending: 0, since: 0, finished: false });
+    if (room.raceId !== m.raceId) Object.assign(m, { raceId: room.raceId, place: 0, leader: "", pending: "", since: 0, finished: false });
     if (room.phase !== "racing" && room.phase !== "finished") return;
-    const place = rankPlayers(room.players).findIndex((p) => p.id === net.id) + 1;
+    const ranked = rankPlayers(room.players);
+    const place = ranked.findIndex((p) => p.id === net.id) + 1;
     const me = room.players.find((p) => p.id === net.id);
     if (!me || !place) return;
     if (me.finishMs !== null && !m.finished) {
       m.finished = true;
-      ses.toast(`You finished ${ordinal(place)}!  ${fmtClock(me.finishMs / 1000)}`, place === 1 ? "good" : "sector", 4);
+      ses.toast(place === 1 ? `You win! 👑  ${fmtClock(me.finishMs / 1000)}` : `You finished ${ordinal(place)}!  ${fmtClock(me.finishMs / 1000)}`, place === 1 ? "good" : "sector", 4);
       this.audio.pickup();
       return;
     }
-    // Only once over the line, and only for a position held for a moment (no flicker side by side).
+    // Only once over the line, and only for a standing held for a moment (no flicker side by side).
     if (m.finished || me.distance <= 0.01 || room.players.length < 2) return;
-    if (place !== m.pending) {
-      m.pending = place;
+    const leader = ranked[0];
+    const key = `${leader.id}|${place}`;
+    if (key !== m.pending) {
+      m.pending = key;
       m.since = this.time;
-    } else if (place !== m.place && this.time - m.since > 0.6) {
-      if (m.place) {
-        if (place < m.place) ses.toast(`Overtake! ${ordinal(place)}`, "good", 1.6);
-        else ses.toast(`Passed. ${ordinal(place)}`, "bad", 1.4);
-      }
-      m.place = place;
+      return;
     }
+    if (this.time - m.since < 0.6 || (leader.id === m.leader && place === m.place)) return;
+    const first = !m.leader;
+    const leadChanged = leader.id !== m.leader;
+    const wasLeading = m.leader === net.id;
+    m.leader = leader.id;
+    const prevPlace = m.place;
+    m.place = place;
+    if (first) return;
+    if (leadChanged && leader.id === net.id) ses.toast("You take the lead! 👑", "good", 2);
+    else if (leadChanged && wasLeading) ses.toast(`${leader.name} takes the lead. You're ${ordinal(place)}`, "bad", 2);
+    else if (leadChanged) ses.toast(`👑 ${leader.name} takes the lead`, "info", 1.8);
+    else if (place < prevPlace) ses.toast(`Overtake! ${ordinal(place)}`, "good", 1.6);
+    else if (place > prevPlace) ses.toast(`Passed. ${ordinal(place)}`, "bad", 1.4);
   }
 
   /** An emote from anyone in the room: a bubble over their car, a toast and, for the horn, a honk. */
@@ -990,6 +1007,9 @@ export class Game {
       wrongSurface: false,
       nitro: { enabled: false, charge: 1, active: false },
       draft: 0,
+      rivals: [],
+      carColor: null,
+      race: null,
     };
   }
 
@@ -1038,7 +1058,37 @@ export class Game {
     h.wrongSurface = t.wheelsOnRoad === 0 && t.wheelsOnGround > 0;
     h.nitro = { enabled: v.nitro.enabled, charge: v.nitro.charge, active: v.nitro.active };
     h.draft = v.draft;
+    this.updateRaceHud(h);
     tmpV.set(0, 0, 0);
+  }
+
+  /** Online: every other driver for the map, and who leads the race (crowned over their car too). */
+  private updateRaceHud(h: Hud) {
+    const net = this.multiplayer.store.get();
+    const room = net.room;
+    h.rivals = [];
+    h.race = null;
+    h.carColor = null;
+    if (!room) return;
+    const me = room.players.find((p) => p.id === net.id);
+    h.carColor = me?.color ?? null;
+    const ranked = room.phase === "racing" || room.phase === "finished" ? rankPlayers(room.players) : [];
+    const leader = ranked[0] && (ranked[0].distance > 0.01 || ranked[0].finishMs !== null) ? ranked[0] : null;
+    for (const c of this.opponents?.states ?? []) h.rivals.push({ x: c.x, z: c.z, color: c.color, leader: c.id === leader?.id });
+    this.opponents?.setLeader(leader?.id ?? null);
+    if (!leader || !me) return;
+    const youLead = leader.id === me.id;
+    const ref = youLead ? ranked[1] : leader;
+    h.race = {
+      leaderName: leader.name,
+      leaderColor: leader.color,
+      winner: leader.finishMs !== null,
+      youLead,
+      place: ranked.indexOf(me) + 1,
+      total: room.players.length,
+      finished: me.finishMs !== null,
+      gapM: ref ? Math.round(Math.abs(ref.distance - me.distance) * this.world.track.length) : 0,
+    };
   }
 
   private resize() {
