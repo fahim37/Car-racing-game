@@ -23,6 +23,7 @@ export function Garage({ game, state }: { game: Game; state: UIState }) {
             {car.name}
           </h1>
           <p className="game-sub">{car.blurb}</p>
+          <p className="faint" style={{ margin: "6px 0 0", fontSize: 13 }}>Every car has the same speed and handling. Pick the one you like the look and sound of.</p>
         </div>
         <div className="panel" style={{ padding: 16, display: "grid", gridTemplateColumns: "1fr auto", gap: "6px 16px", fontSize: 14 }}>
           <span className="muted">Class</span>

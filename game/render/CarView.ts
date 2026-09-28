@@ -20,6 +20,27 @@ interface WheelNode {
   radius: number;
 }
 
+/**
+ * Blurred spokes, as an alpha map (read from the green channel, so drawn in grey): clear over the
+ * hub, densest out towards the rim where the spokes sweep fastest.
+ */
+function spinBlurTexture() {
+  const c = document.createElement("canvas");
+  c.width = c.height = 128;
+  const g = c.getContext("2d")!;
+  g.fillStyle = "#000";
+  g.fillRect(0, 0, 128, 128);
+  const grd = g.createRadialGradient(64, 64, 8, 64, 64, 64);
+  grd.addColorStop(0, "#000");
+  grd.addColorStop(0.3, "#333");
+  grd.addColorStop(0.75, "#b3b3b3");
+  grd.addColorStop(0.95, "#ccc");
+  grd.addColorStop(1, "#000");
+  g.fillStyle = grd;
+  g.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(c);
+}
+
 const FLAME_VERT = `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
 const FLAME_FRAG = `uniform float uTime; uniform float uAmount; uniform float uSeed; varying vec2 vUv;
 void main() {
@@ -94,6 +115,7 @@ export class CarView {
   private paintMats: THREE.MeshPhysicalMaterial[] = [];
   private headlight: THREE.SpotLight | null = null;
   private boostFlames: BoostFlame[] = [];
+  private spinBlur: THREE.MeshStandardMaterial | null = null;
   private boost = 0;
   private boostClock = 0;
   private cgZ = 0;
@@ -137,6 +159,18 @@ export class CarView {
       return new THREE.MeshPhysicalMaterial({ color: 0x0c1116, metalness: 0, roughness: 0.03, transparent: true, opacity: 0.55, envMapIntensity: 1.6, depthWrite: false });
     }
     const c = std.clone();
+    if (/rubber|tire|tyre/i.test(name)) {
+      // Tyres: matte charcoal rubber with deep tread relief (some models ship glossy or even metallic
+      // rubber); sidewall lettering stays readable where the model has it.
+      const lettered = !!std.map;
+      c.metalness = 0;
+      c.roughness = lettered ? 0.8 : 0.9;
+      if (lettered) c.color.setScalar(0.5);
+      else c.color.setRGB(0.028, 0.028, 0.03);
+      if (c.normalMap) c.normalScale.set(1.6, 1.6);
+      c.envMapIntensity = 0.45;
+      return c;
+    }
     if (name.startsWith("TailLight_")) {
       c.emissive = new THREE.Color(0xff200c);
       c.emissiveIntensity = 0.25;
@@ -236,6 +270,19 @@ export class CarView {
     const hubGeos: [THREE.BufferGeometry, THREE.Material][][] = [[], [], [], []];
     for (const [geo, mat] of wheelParts) splitQuadrants(geo).forEach((g, q) => g.getAttribute("position").count > 0 && wheelGeos[q].push([g, mat]));
     for (const [geo, mat] of hubParts) splitQuadrants(geo).forEach((g, q) => g.getAttribute("position").count > 0 && hubGeos[q].push([g, mat]));
+    if (!this.isGhost) {
+      // Spokes and the dark gaps between them smear into a dim, neutral blur.
+      this.spinBlur = new THREE.MeshStandardMaterial({
+        color: new THREE.Color().setRGB(0.05, 0.05, 0.055),
+        metalness: 0,
+        roughness: 0.9,
+        envMapIntensity: 0.25,
+        alphaMap: spinBlurTexture(),
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      });
+    }
     for (let q = 0; q < 4; q++) {
       const bb = new THREE.Box3();
       for (const [g] of wheelGeos[q]) {
@@ -256,6 +303,15 @@ export class CarView {
       for (const [g, mat] of hubGeos[q]) {
         g.translate(-center.x, -center.y, -center.z);
         hub.add(new THREE.Mesh(g, this.upgrade(mat, paint, ghostMat)));
+      }
+      if (this.spinBlur && !bb.isEmpty()) {
+        // On the outer face of the wheel, inside the tyre; it steers with the hub but does not spin.
+        const outer = center.x >= 0 ? 1 : -1;
+        const disc = new THREE.Mesh(new THREE.CircleGeometry(radius * 0.8, 40), this.spinBlur);
+        disc.rotation.y = (outer * Math.PI) / 2;
+        disc.position.x = outer * ((bb.max.x - bb.min.x) / 2) * 0.96;
+        disc.renderOrder = 2;
+        hub.add(disc);
       }
       this.body.add(pivot, hub);
       this.wheels.push({ pivot, hub, center, radius });
@@ -326,6 +382,12 @@ export class CarView {
     }
     for (const m of this.brakeMats) m.emissiveIntensity = pose.brake > 0.05 ? 3.2 : this.lightsOn ? 1 : 0.25;
     this.setBoost(vehicle.nitro.active);
+    this.setWheelSpeed(vehicle.wheels[2].omega * rPhys);
+  }
+
+  /** Blurs the spokes with wheel speed (m/s): from about 25 km/h, fully blurred by 110 km/h. */
+  setWheelSpeed(speed: number) {
+    if (this.spinBlur) this.spinBlur.opacity = Math.min(0.75, Math.max(0, (Math.abs(speed) - 7) / 28));
   }
 
   dispose() {

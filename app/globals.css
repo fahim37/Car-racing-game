@@ -111,6 +111,11 @@ button {
 .mp-emotes { display: flex; gap: 4px; margin-top: 8px; }
 .mp-emotes button { flex: 1; min-height: 32px; border-radius: 8px; border: 1px solid var(--line); background: #00000030; font-size: 17px; cursor: pointer; }
 .mp-emotes button:active { transform: scale(0.92); }
+.leader-banner { display: flex; align-items: center; gap: 8px; padding: 7px 14px; font-style: italic; border: 1px solid rgba(244, 197, 66, 0.55) !important; }
+.leader-banner .crown { font-style: normal; font-size: 16px; }
+.leader-banner .lb-label { font-size: 10.5px; font-weight: 800; letter-spacing: 0.14em; color: #f4c542; }
+.leader-banner b { font-size: 16px; font-weight: 800; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.leader-banner .lb-gap { font-size: 12px; color: var(--muted); font-weight: 600; }
 .slipstream { position: relative; overflow: hidden; padding: 6px 10px; font: italic 800 11px var(--font); letter-spacing: 0.12em; color: #bff0ff; }
 .slipstream i { position: absolute; left: 0; bottom: 0; height: 3px; background: #58dafa; }
 .network-notice { position: absolute; left: 16px; top: 100px; max-width: 280px; padding: 14px; z-index: 8; font-size: 13px; }

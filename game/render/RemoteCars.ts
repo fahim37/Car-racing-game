@@ -9,6 +9,8 @@ interface Remote {
   target: Peer;
   spin: number;
   label: THREE.Sprite;
+  /** Whether the name tag currently wears the leader's crown. */
+  crowned: boolean;
   /** Last received position, to notice a fresh packet. */
   lastX: number;
   lastZ: number;
@@ -17,8 +19,11 @@ interface Remote {
   emoteAge: number;
 }
 
-/** Where an opponent is, which way it faces and how fast it goes (for bumps and slipstream). */
+/** Where an opponent is, which way it faces and how fast it goes (for bumps, slipstream and the map). */
 export interface RemoteCarState {
+  id: string;
+  name: string;
+  color: string;
   x: number;
   y: number;
   z: number;
@@ -31,19 +36,28 @@ export interface RemoteCarState {
 /** Seconds of network and snapshot delay to predict opponents over. */
 const LEAD = 0.1;
 
-function nameplate(name: string, color: string) {
+/** Name tag texture; the race leader's gets a crown and a gold edge. */
+function nameplateTexture(name: string, color: string, crown: boolean) {
   const canvas = document.createElement("canvas");
   canvas.width = 384; canvas.height = 64;
   const g = canvas.getContext("2d")!;
   g.fillStyle = "rgba(10,18,24,0.84)";
   g.fillRect(0, 0, 384, 64);
   g.fillStyle = color; g.fillRect(0, 0, 8, 64);
-  g.font = "600 28px system-ui"; g.fillStyle = "#ffffff";
+  if (crown) {
+    g.strokeStyle = "#f4c542"; g.lineWidth = 4;
+    g.strokeRect(2, 2, 380, 60);
+  }
+  g.font = "600 28px system-ui, 'Apple Color Emoji', 'Segoe UI Emoji'"; g.fillStyle = crown ? "#ffe39a" : "#ffffff";
   g.textAlign = "center"; g.textBaseline = "middle";
-  g.fillText(name, 196, 32, 340);
+  g.fillText(crown ? `👑 ${name}` : name, 196, 32, 340);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
-  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthWrite: false }));
+  return texture;
+}
+
+function nameplate(name: string, color: string) {
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: nameplateTexture(name, color, false), depthWrite: false }));
   sprite.position.y = 2.6;
   sprite.scale.set(4.8, 0.8, 1);
   return sprite;
@@ -86,7 +100,7 @@ export class RemoteCars {
     for (const peer of peers) {
       let remote = this.cars.get(peer.id);
       if (!remote) {
-        remote = { view: null, target: peer, spin: 0, label: nameplate(peer.name, peer.color), lastX: NaN, lastZ: NaN, receivedAt: now, emote: null, emoteAge: 0 };
+        remote = { view: null, target: peer, spin: 0, label: nameplate(peer.name, peer.color), crowned: false, lastX: NaN, lastZ: NaN, receivedAt: now, emote: null, emoteAge: 0 };
         this.cars.set(peer.id, remote);
         const entry = remote;
         void CarView.create(carById(peer.carId), peer.color, false, true).then((view) => {
@@ -122,6 +136,7 @@ export class RemoteCars {
       }
       remote.label.visible = view.root.position.distanceToSquared(local) < 250 * 250;
       view.setBoost(s.nitro);
+      view.setWheelSpeed(s.speed);
       if (remote.emote) {
         remote.emoteAge += dt;
         remote.emote.position.y = 3.7 + remote.emoteAge * 0.4;
@@ -130,7 +145,7 @@ export class RemoteCars {
       }
       const p = view.root.position;
       const fl = Math.hypot(this.fwd.x, this.fwd.z) || 1;
-      this.states.push({ x: p.x, y: p.y, z: p.z, fx: this.fwd.x / fl, fz: this.fwd.z / fl, speed: s.speed, cylinders: view.spec.cylinders });
+      this.states.push({ id: peer.id, name: peer.name, color: peer.color, x: p.x, y: p.y, z: p.z, fx: this.fwd.x / fl, fz: this.fwd.z / fl, speed: s.speed, cylinders: view.spec.cylinders });
     }
   }
 
@@ -141,6 +156,19 @@ export class RemoteCars {
       for (const o of [1.15, -1.15]) out.push({ x: c.x + c.fx * o, z: c.z + c.fz * o, r: 1.05, kind: "car", vx: c.fx * c.speed, vz: c.fz * c.speed });
     }
     return out;
+  }
+
+  /** Crowns the race leader's name tag (null: nobody leads yet). */
+  setLeader(id: string | null) {
+    for (const [pid, r] of this.cars) {
+      const crown = pid === id;
+      if (crown === r.crowned) continue;
+      r.crowned = crown;
+      const old = r.label.material.map;
+      r.label.material.map = nameplateTexture(r.target.name, r.target.color, crown);
+      r.label.material.needsUpdate = true;
+      old?.dispose();
+    }
   }
 
   /** Floats an emoji above a player's car for a moment. */

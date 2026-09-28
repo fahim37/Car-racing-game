@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import type { Game } from "@/game/Game";
+import { ordinal } from "@/game/network/Multiplayer";
 import { fmtDelta, fmtScore, fmtTime, useTicker } from "./common";
 
 // Round speedometer: a 270° dial opening at the bottom, clockwise from bottom-left (SVG degrees).
@@ -129,12 +130,30 @@ function Minimap({ game }: { game: Game }) {
         ctx.arc(px(hud.ghost.x), pz(hud.ghost.z), 3.5, 0, Math.PI * 2);
         ctx.fill();
       }
-      ctx.fillStyle = "#86cdb6";
-      ctx.strokeStyle = "#0d1316";
+      // Everyone else in an online room, in their colours; the leader wears a gold ring.
+      const dot = (x: number, z: number, color: string, r: number, leader: boolean) => {
+        if (leader) {
+          ctx.strokeStyle = "#f4c542";
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          ctx.arc(px(x), pz(z), r + 3, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.fillStyle = color;
+        ctx.strokeStyle = "#0d1316";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(px(x), pz(z), r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      };
+      for (const r of hud.rivals) dot(r.x, r.z, r.color, 4, r.leader);
+      // You, on top: larger, with a white edge.
+      dot(hud.car.x, hud.car.z, hud.carColor ?? "#86cdb6", 5, !!hud.race?.youLead);
+      ctx.strokeStyle = "rgba(255,255,255,0.9)";
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.arc(px(hud.car.x), pz(hud.car.z), 4.5, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.arc(px(hud.car.x), pz(hud.car.z), 6.5, 0, Math.PI * 2);
       ctx.stroke();
     };
     raf = requestAnimationFrame(draw);
@@ -215,6 +234,17 @@ export function Hud({ game, touch }: { game: Game; touch: boolean }) {
 
       {/* Lesson / drift / countdown */}
       <div className="hud-top">
+        {h.race && (
+          <div className="chip leader-banner" role="status" aria-label={`${h.race.winner ? "Winner" : "Leader"}: ${h.race.youLead ? "you" : h.race.leaderName}`}>
+            <span className="crown" aria-hidden="true">👑</span>
+            <span className="lb-label">{h.race.winner ? "WINNER" : "LEADER"}</span>
+            <span className="mp-dot" style={{ background: h.race.leaderColor }} />
+            <b>{h.race.youLead ? "YOU" : h.race.leaderName}</b>
+            <span className="lb-gap">
+              {h.race.finished ? `You finished ${ordinal(h.race.place)}` : h.race.youLead ? (h.race.total > 1 ? `ahead by ${h.race.gapM} m` : "") : `You ${ordinal(h.race.place)} · ${h.race.gapM} m behind`}
+            </span>
+          </div>
+        )}
         {h.lesson && (
           <div className="chip lesson-card">
             <div className="t">
