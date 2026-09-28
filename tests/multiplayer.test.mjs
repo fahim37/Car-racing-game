@@ -75,3 +75,58 @@ test("invite rooms isolate drivers, validate races, transfer hosts, and clean up
   await new Promise((resolve) => setTimeout(resolve, 100));
   assert.equal(server.rooms.size, 0);
 });
+
+test("hosts pick the race length, laps are counted, and emotes reach the room", async (t) => {
+  let clock = Date.now();
+  const http = createServer();
+  const server = createRoomServer(http, { path: "/racing/socket.io", now: () => clock });
+  await new Promise((resolve) => http.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${http.address().port}`;
+  const sockets = [];
+  t.after(async () => { sockets.forEach((s) => s.disconnect()); await server.close(); });
+  const connect = async () => {
+    const socket = io(url, { path: "/racing/socket.io", transports: ["websocket"], autoConnect: false, reconnection: false });
+    sockets.push(socket);
+    const ready = event(socket, "connect"); socket.connect(); await ready;
+    return socket;
+  };
+  const host = await connect();
+  const guest = await connect();
+  const { room } = await request(host, "room:create", { name: "Host", carId: "brute" });
+  await request(guest, "room:join", { code: room.code, name: "Guest" });
+  await request(host, "player:ready"); await request(guest, "player:ready");
+
+  const emote = event(guest, "emote");
+  host.emit("player:emote", 2);
+  assert.deepEqual(await emote, { id: host.id, e: 2 });
+  host.emit("player:emote", 99); // out of range: ignored
+  host.emit("player:emote", 1); // too soon after the last one: ignored
+  await request(host, "player:ready"); // acknowledged, so the server has handled the emotes above
+  clock += 800;
+  const next = event(guest, "emote");
+  host.emit("player:emote", 4);
+  assert.equal((await next).e, 4);
+
+  const counted = event(guest, "room", (r) => r.phase === "countdown");
+  assert.ok((await request(host, "race:start", { laps: 3 })).ok);
+  assert.equal((await counted).laps, 3);
+  const go = event(guest, "room", (r) => r.phase === "racing");
+  clock += 6000; await go;
+  const sample = (progress) => ({ p: [10, 10, 10], q: [0, 0, 0, 1], speed: 25, steer: 0, brake: 0, nitro: false, progress });
+  const lap = [0.1, 0.2, 0.26, 0.36, 0.46, 0.51, 0.61, 0.71, 0.76, 0.86, 0.96, 0.995, 0.005];
+  const drive = async (progresses) => {
+    for (const progress of progresses) {
+      clock += 2000;
+      const tick = event(guest, "snapshot", (s) => s.players.some((p) => p.id === host.id && p.state.progress === progress));
+      host.emit("player:state", sample(progress)); await tick;
+    }
+  };
+  await drive([0.995, 0.005, ...lap]);
+  const me = () => server.rooms.get(room.code).players.get(host.id);
+  assert.equal(me().lap, 1);
+  assert.equal(me().finishMs, null);
+  await drive([...lap, ...lap]);
+  assert.equal(me().lap, 3);
+  assert.ok(me().finishMs > 10000);
+  assert.ok(me().distance > 2.9);
+});

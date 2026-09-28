@@ -20,6 +20,43 @@ interface WheelNode {
   radius: number;
 }
 
+const FLAME_VERT = `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
+const FLAME_FRAG = `uniform float uTime; uniform float uAmount; uniform float uSeed; varying vec2 vUv;
+void main() {
+  float t = vUv.y;                  // 0 at the pipe, 1 at the tip
+  float x = abs(vUv.x - 0.5) * 2.0; // 0 on the axis, 1 at the edge of the card
+  float flick = 0.8 + 0.2 * sin(uTime * 53.0 + uSeed) * sin(uTime * 31.0 + t * 9.0 + uSeed);
+  float w = (1.0 - pow(t, 1.4)) * (0.45 + 0.55 * smoothstep(0.0, 0.18, t)) * flick;
+  float body = 1.0 - smoothstep(w * 0.35, w, x);
+  float core = (1.0 - smoothstep(0.0, w * 0.45, x)) * (1.0 - smoothstep(0.1, 0.6, t));
+  // White-hot at the pipe, nitro blue, burning out orange at the tips.
+  vec3 col = mix(vec3(0.3, 0.65, 1.0), vec3(1.0, 0.5, 0.18), smoothstep(0.35, 0.9, t));
+  col = mix(col, vec3(0.92, 0.97, 1.0), core);
+  float a = body * (1.0 - smoothstep(0.65, 1.0, t)) * uAmount;
+  gl_FragColor = vec4(col * (2.0 + 4.0 * core), a);
+  #include <colorspace_fragment>
+}`;
+
+/** Soft round glow for the exhaust outlets. */
+function glowTexture() {
+  const c = document.createElement("canvas");
+  c.width = c.height = 64;
+  const g = c.getContext("2d")!;
+  const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grd.addColorStop(0, "rgba(220,240,255,1)");
+  grd.addColorStop(0.35, "rgba(90,180,255,0.55)");
+  grd.addColorStop(1, "rgba(40,120,255,0)");
+  g.fillStyle = grd;
+  g.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c);
+}
+
+interface BoostFlame {
+  root: THREE.Group;
+  material: THREE.ShaderMaterial;
+  glow: THREE.Sprite;
+}
+
 /**
  * Splits a geometry into the four wheel quadrants by triangle centroid.
  * Model space: +x is the car's left, +z forward. Order: FL, FR, RL, RR.
@@ -56,7 +93,9 @@ export class CarView {
   private headMats: THREE.MeshStandardMaterial[] = [];
   private paintMats: THREE.MeshPhysicalMaterial[] = [];
   private headlight: THREE.SpotLight | null = null;
-  private boostFlames: THREE.Mesh[] = [];
+  private boostFlames: BoostFlame[] = [];
+  private boost = 0;
+  private boostClock = 0;
   private cgZ = 0;
   private eye = new THREE.Vector3(0.36, 0.55, -0.2);
   private hood = new THREE.Vector3(0, 0.6, 0.8);
@@ -111,17 +150,60 @@ export class CarView {
     return c;
   }
 
-  private async init(paint: string, lite: boolean) {
-    if (!this.isGhost) {
-      for (const x of [-0.45, 0.45]) {
-        const flame = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.9, 6), new THREE.MeshBasicMaterial({ color: 0x67deff, transparent: true, opacity: 0.85, depthWrite: false }));
-        flame.rotation.x = -Math.PI / 2;
-        flame.position.set(x, -0.15, -this.spec.wheelbase / 2 - 1);
-        flame.visible = false;
-        this.root.add(flame);
-        this.boostFlames.push(flame);
+  /** Nitro flames from twin exhausts at the rear bumper (body space). */
+  private buildBoostFlames(bodyBox: THREE.Box3) {
+    // A flame is three crossed cards along -z: v runs from the pipe (0) to the tip (1).
+    const card = new THREE.PlaneGeometry(1, 1);
+    card.rotateX(-Math.PI / 2);
+    card.translate(0, 0, -0.5);
+    const glowMap = glowTexture();
+    const halfWidth = (bodyBox.max.x - bodyBox.min.x) / 2;
+    for (const side of [1, -1]) {
+      const material = new THREE.ShaderMaterial({
+        uniforms: { uTime: { value: 0 }, uAmount: { value: 0 }, uSeed: { value: side * 3.7 } },
+        vertexShader: FLAME_VERT,
+        fragmentShader: FLAME_FRAG,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+      });
+      const root = new THREE.Group();
+      for (let k = 0; k < 3; k++) {
+        const m = new THREE.Mesh(card, material);
+        m.rotation.z = (k * Math.PI) / 3;
+        m.frustumCulled = false;
+        root.add(m);
       }
+      const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowMap, color: 0x9fd8ff, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
+      root.add(glow);
+      // Model space: tyres on y = 0, the rear bumper at bodyBox.min.z; body space is offset to the CG.
+      root.position.set(side * Math.min(0.42, halfWidth * 0.45), bodyBox.min.y + 0.3 - this.spec.cgHeight, bodyBox.min.z + 0.05 - this.cgZ);
+      root.visible = false;
+      this.root.add(root);
+      this.boostFlames.push({ root, material, glow });
     }
+  }
+
+  /** Eases the nitro flames in and out; `on` is whether the boost is firing now. */
+  setBoost(on: boolean) {
+    const now = performance.now() / 1000;
+    const dt = Math.min(0.1, now - (this.boostClock || now));
+    this.boostClock = now;
+    this.boost += ((on ? 1 : 0) - this.boost) * Math.min(1, dt * (on ? 14 : 7));
+    for (const f of this.boostFlames) {
+      f.root.visible = this.boost > 0.02;
+      if (!f.root.visible) continue;
+      const jitter = 0.85 + Math.random() * 0.3;
+      f.root.scale.set(0.32 + 0.08 * this.boost, 0.32 + 0.08 * this.boost, (0.6 + 1.1 * this.boost) * jitter);
+      f.material.uniforms.uTime.value = now;
+      f.material.uniforms.uAmount.value = this.boost;
+      // The glow sprite lives inside the scaled flame group; undo the stretch.
+      f.glow.scale.set((0.95 * this.boost) / f.root.scale.x, (0.95 * this.boost) / f.root.scale.y, 1);
+    }
+  }
+
+  private async init(paint: string, lite: boolean) {
     const gltf = await loadGLTF(`cars/${this.spec.model}${lite ? "_lite" : ""}.glb`);
     const src = gltf.scene;
     src.updateMatrixWorld(true);
@@ -192,6 +274,7 @@ export class CarView {
     const eyeZ = (cabin.min.z + cabin.max.z) / 2 - 0.12;
     this.eye.set(0.36, eyeY - this.spec.cgHeight, eyeZ - this.cgZ);
     this.hood.set(0, roof * 0.8 - this.spec.cgHeight, L * 0.42 - this.cgZ);
+    if (!this.isGhost) this.buildBoostFlames(bodyBox);
 
     if (!this.isGhost) {
       const light = new THREE.SpotLight(0xfff1d8, 0, 150, 0.55, 0.45, 1.2);
@@ -242,10 +325,7 @@ export class CarView {
       w.pivot.rotation.x = (pose.spin[i] * rPhys) / w.radius;
     }
     for (const m of this.brakeMats) m.emissiveIntensity = pose.brake > 0.05 ? 3.2 : this.lightsOn ? 1 : 0.25;
-    for (const flame of this.boostFlames) {
-      flame.visible = vehicle.nitro.active;
-      flame.scale.y = 0.85 + Math.sin(performance.now() * 0.05) * 0.2;
-    }
+    this.setBoost(vehicle.nitro.active);
   }
 
   dispose() {
@@ -255,6 +335,10 @@ export class CarView {
         m.geometry.dispose();
         const mats = Array.isArray(m.material) ? m.material : [m.material];
         mats.forEach((mm) => mm.dispose());
+      } else if ((o as THREE.Sprite).isSprite) {
+        const sm = (o as THREE.Sprite).material;
+        sm.map?.dispose();
+        sm.dispose();
       }
     });
   }

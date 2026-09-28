@@ -56,7 +56,7 @@ export function Help({ game }: { game: Game }) {
               <br />
               <b>Automatic gearbox:</b> hold brake at a standstill to reverse. <b>Wheels:</b> calibrate once in Settings → Controls.
               <br />
-              <b>Nitro:</b> in Free Drive and Multiplayer, hold N / right Shift / RB while accelerating, or hold Nitro + Gas on mobile. Five seconds of boost recharge after a short cooldown.
+              <b>Nitro:</b> in Free Drive and Multiplayer, hold N / right Shift / RB (or Nitro on mobile) to boost; it floors the throttle for you. Five seconds of boost that recharge slowly; drive through the glowing blue nitro gates on the road to top it up.
               <br />
               <b>Multiplayer:</b> host a room from the main menu and share its six-character code or invitation link. The host starts a one-lap race once everyone is ready. Online cars do not collide.
             </p>

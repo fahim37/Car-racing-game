@@ -44,7 +44,10 @@ export interface CircleCollider {
   x: number;
   z: number;
   r: number;
-  kind: "tree" | "rock" | "post";
+  kind: "tree" | "rock" | "post" | "car";
+  /** Ground velocity of a moving obstacle (another player's car), m/s. */
+  vx?: number;
+  vz?: number;
 }
 
 const scratchFrame = {} as Frame;
@@ -285,32 +288,6 @@ export class World {
         this.surface[k] = surf;
       }
     }
-  }
-
-  /**
-   * Where 3D grass grows (0..255 per terrain vertex): meadows, thinner under forest, none on the
-   * road and shoulders, the paddock pad, beaches or water.
-   */
-  grassMask(): Uint8Array {
-    const { cols, rows } = this;
-    const out = new Uint8Array(cols * rows);
-    const p: Projection = { s: 0, d: 0, i: 0, dist: 0 };
-    for (let k = 0; k < cols * rows; k++) {
-      p.s = this.projS[k];
-      p.d = this.projD[k];
-      const f = this.track.frameAt(p.s, scratchFrame);
-      const edge = f.halfWidth + SHOULDER_WIDTH;
-      const road = smoothstep(edge + 0.6, edge + 2.8, Math.abs(p.d));
-      const pad = p.d > 0 ? smoothstep(0, 3, this.padDistance(p)) : 1;
-      const h = this.heights[k];
-      const dry = smoothstep(WATER_Y + 1.0, WATER_Y + 1.8, h);
-      const grass = this.splat[k * 4] / 255;
-      const forest = this.splat[k * 4 + 1] / 255;
-      const rock = this.splat[k * 4 + 2] / 255;
-      const density = clamp(grass * 1.1 + forest * 0.25 - rock, 0, 1) * road * pad * dry;
-      out[k] = Math.round(density * 255);
-    }
-    return out;
   }
 
   /** Terrain height by triangle interpolation (matches the rendered mesh exactly). */

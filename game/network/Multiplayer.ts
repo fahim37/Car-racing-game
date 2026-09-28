@@ -17,7 +17,10 @@ export interface Player {
   carId: string;
   color: string;
   ready: boolean;
+  /** Race distance in laps (grows past 1 on multi-lap races). */
   distance: number;
+  /** Laps completed. */
+  lap: number;
   finishMs: number | null;
 }
 export interface Room {
@@ -25,6 +28,7 @@ export interface Room {
   hostId: string;
   phase: "practice" | "countdown" | "racing" | "finished";
   raceId: number;
+  laps: number;
   startAt: number;
   serverTime: number;
   players: Player[];
@@ -38,8 +42,30 @@ export interface NetworkState {
   peers: Peer[];
 }
 
+/** Standings: finishers by time, then everyone else by race distance. */
+export function rankPlayers<T extends Pick<Player, "distance" | "finishMs">>(players: T[]) {
+  return [...players].sort((a, b) => {
+    if (a.finishMs !== null || b.finishMs !== null) return (a.finishMs ?? Infinity) - (b.finishMs ?? Infinity);
+    return b.distance - a.distance;
+  });
+}
+
+/** 1 → "1st", 2 → "2nd", 11 → "11th". */
+export function ordinal(n: number) {
+  const suffix = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return `${n}${suffix[(v - 20) % 10] ?? suffix[v] ?? suffix[0]}`;
+}
+
+/** Quick emotes; the last one is the horn. */
+export const EMOTES = ["👋", "😂", "🔥", "😎", "📢"];
+export const HORN = EMOTES.length - 1;
+export const LAP_CHOICES = [1, 3, 5];
+
 export class Multiplayer {
   readonly store = new Store<NetworkState>({ id: "", room: null, status: "offline", error: null, peers: [] });
+  /** Called when anyone in the room (including you) sends an emote. */
+  onEmote: ((playerId: string, emote: number) => void) | null = null;
   private socket: Socket | null = null;
   private sendTimer = 0;
   private clockOffset = 0;
@@ -77,7 +103,7 @@ export class Multiplayer {
       if (!current.room) return;
       const players = current.room.players.map((p) => {
         const update = snapshot.players.find((v) => v.id === p.id);
-        return update ? { ...p, distance: update.distance, finishMs: update.finishMs } : p;
+        return update ? { ...p, distance: update.distance, lap: update.lap, finishMs: update.finishMs } : p;
       });
       this.store.set({ peers: snapshot.players.filter((p) => p.id !== current.id), room: { ...current.room, players } });
     });
@@ -87,6 +113,7 @@ export class Multiplayer {
       this.store.set({ room: null, peers: [], status: "offline", error: "Connection lost. Open Multiplayer to rejoin with the invitation code." });
     });
     socket.on("room:closed", (error: string) => { this.leave(); this.store.set({ error }); });
+    socket.on("emote", (m: { id: string; e: number }) => { if (Number.isInteger(m?.e) && m.e >= 0 && m.e < EMOTES.length) this.onEmote?.(m.id, m.e); });
     try {
       await new Promise<void>((resolve, reject) => {
         socket.once("connect", resolve);
@@ -106,7 +133,8 @@ export class Multiplayer {
   }
 
   async ready() { await this.request("player:ready", {}); }
-  async startRace() { await this.request("race:start", {}); }
+  async startRace(laps = 1) { await this.request("race:start", { laps }); }
+  emote(index: number) { this.socket?.emit("player:emote", index); }
   async practice() { await this.request("race:practice", {}); }
 
   update(dt: number, vehicle: Vehicle | null, progress: number) {

@@ -99,6 +99,20 @@ button {
 .mp-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .mp-name { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .mp-message { font-size: 11px; margin-top: 8px; color: var(--warm); }
+.mp-place { font-style: italic; line-height: 1; }
+.mp-place b { font: italic 800 34px var(--font); }
+.mp-place sup { font: italic 800 14px var(--font); text-transform: uppercase; margin-left: 1px; }
+.mp-place small { font: italic 700 15px var(--font); margin-left: 4px; }
+.mp-lap { font: italic 700 11px var(--font); letter-spacing: 0.08em; color: var(--muted); }
+.mp-lap b { font-size: 20px; color: white; }
+.mp-laps { display: flex; gap: 4px; margin: 0 0 8px; }
+.mp-laps button { flex: 1; min-height: 28px; border-radius: 6px; border: 1px solid var(--line); background: #00000030; color: var(--muted); font-size: 11px; cursor: pointer; }
+.mp-laps button.on { background: var(--accent); border-color: transparent; color: #0d1316; font-weight: 700; }
+.mp-emotes { display: flex; gap: 4px; margin-top: 8px; }
+.mp-emotes button { flex: 1; min-height: 32px; border-radius: 8px; border: 1px solid var(--line); background: #00000030; font-size: 17px; cursor: pointer; }
+.mp-emotes button:active { transform: scale(0.92); }
+.slipstream { position: relative; overflow: hidden; padding: 6px 10px; font: italic 800 11px var(--font); letter-spacing: 0.12em; color: #bff0ff; }
+.slipstream i { position: absolute; left: 0; bottom: 0; height: 3px; background: #58dafa; }
 .network-notice { position: absolute; left: 16px; top: 100px; max-width: 280px; padding: 14px; z-index: 8; font-size: 13px; }
 @media (max-height: 560px) {
   .multiplayer-card { margin: 0 auto; padding: 18px; gap: 10px; }
@@ -1005,10 +1019,18 @@ button {
   border-radius: 4px;
   background: var(--text);
 }
-.pause-btn {
+/* Back and pause while driving (desktop), bottom centre. */
+.drive-btns {
   position: absolute;
-  right: calc(16px + var(--safe-r));
-  top: calc(14px + var(--safe-t));
+  left: 50%;
+  bottom: calc(16px + var(--safe-b));
+  transform: translateX(-50%);
+  display: flex;
+  gap: 10px;
+  opacity: 0.7;
+}
+.drive-btns:hover {
+  opacity: 1;
 }
 .invalid-tag {
   color: var(--bad);
@@ -1423,4 +1445,17 @@ button {
   left: auto;
   right: calc(16px + var(--safe-r));
   transform: none;
+}
+/* Touch: back to the menu from the top-left corner; the chips there move over to make room. */
+.touch .back-btn {
+  position: absolute;
+  left: calc(12px + var(--safe-l));
+  top: calc(12px + var(--safe-t));
+  pointer-events: auto;
+}
+.hud.touch-mode .hud-tl {
+  left: calc(66px + var(--safe-l));
+}
+.layer:has(.touch) .multiplayer-hud {
+  left: calc(64px + var(--safe-l));
 }

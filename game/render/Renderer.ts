@@ -4,7 +4,6 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { Quality } from "../save/profile";
-import { GrassQuality } from "./GrassView";
 
 export interface QualityProfile {
   pixelRatio: number;
@@ -17,7 +16,6 @@ export interface QualityProfile {
   shadows: boolean;
   /** Use the lighter car models (phones, integrated graphics). */
   carLite: boolean;
-  grass: GrassQuality | null;
   bloom: boolean;
   msaa: number;
 }
@@ -25,13 +23,13 @@ export interface QualityProfile {
 export function qualityProfile(q: Quality, dpr: number): QualityProfile {
   switch (q) {
     case "low":
-      return { pixelRatio: Math.min(dpr, 1), shadowSize: 1024, shadowExtent: 45, vegetationDensity: 0.6, nearScale: 0.6, lodBias: 0.75, hdr: "1k", shadows: true, carLite: true, grass: null, bloom: false, msaa: 0 };
+      return { pixelRatio: Math.min(dpr, 1), shadowSize: 1024, shadowExtent: 45, vegetationDensity: 0.6, nearScale: 0.6, lodBias: 0.75, hdr: "1k", shadows: true, carLite: true, bloom: false, msaa: 0 };
     case "medium":
-      return { pixelRatio: Math.min(dpr, 1.5), shadowSize: 2048, shadowExtent: 60, vegetationDensity: 0.85, nearScale: 0.8, lodBias: 1, hdr: "2k", shadows: true, carLite: true, grass: { tile: 48, spacing: 0.62 }, bloom: false, msaa: 2 };
+      return { pixelRatio: Math.min(dpr, 1.5), shadowSize: 2048, shadowExtent: 60, vegetationDensity: 0.85, nearScale: 0.8, lodBias: 1, hdr: "2k", shadows: true, carLite: true, bloom: false, msaa: 2 };
     case "ultra":
-      return { pixelRatio: Math.min(dpr, 2), shadowSize: 4096, shadowExtent: 85, vegetationDensity: 1, nearScale: 1.35, lodBias: 1.6, hdr: "2k", shadows: true, carLite: false, grass: { tile: 84, spacing: 0.42 }, bloom: true, msaa: 4 };
+      return { pixelRatio: Math.min(dpr, 2), shadowSize: 4096, shadowExtent: 85, vegetationDensity: 1, nearScale: 1.35, lodBias: 1.6, hdr: "2k", shadows: true, carLite: false, bloom: true, msaa: 4 };
     default:
-      return { pixelRatio: Math.min(dpr, 2), shadowSize: 4096, shadowExtent: 72, vegetationDensity: 1, nearScale: 1, lodBias: 1.25, hdr: "2k", shadows: true, carLite: false, grass: { tile: 66, spacing: 0.5 }, bloom: true, msaa: 4 };
+      return { pixelRatio: Math.min(dpr, 2), shadowSize: 4096, shadowExtent: 72, vegetationDensity: 1, nearScale: 1, lodBias: 1.25, hdr: "2k", shadows: true, carLite: false, bloom: true, msaa: 4 };
   }
 }
 
@@ -254,10 +252,11 @@ export class Renderer {
     if (prev !== this.dynScale) this.applyPixelRatio();
   }
 
-  render(scene: THREE.Scene, camera: THREE.Camera, speed: number) {
+  /** `boost` (0..1) adds a streaking speed blur while nitro fires, whatever the motion-blur setting. */
+  render(scene: THREE.Scene, camera: THREE.Camera, speed: number, boost = 0) {
     this.renderPass.scene = scene;
     this.renderPass.camera = camera;
-    this.finalPass.uniforms.uBlur.value = this.motionBlur * Math.max(0, Math.min(1, (speed - 15) / 45));
+    this.finalPass.uniforms.uBlur.value = Math.max(this.motionBlur, boost * 0.7) * Math.max(0, Math.min(1, (speed - 15) / 45));
     this.composer.render();
   }
 }

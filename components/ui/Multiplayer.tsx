@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import type { Game } from "@/game/Game";
+import { EMOTES, HORN, LAP_CHOICES, ordinal, rankPlayers } from "@/game/network/Multiplayer";
 import { CARS } from "@/game/physics/carSpecs";
 import { isCarUnlocked } from "@/game/session/events";
 import { fmtTime, useTicker } from "./common";
@@ -32,7 +33,7 @@ export function MultiplayerLobby({ game }: { game: Game }) {
       <div className="panel multiplayer-card">
         <div className="eyebrow">Your road. Your friends.</div>
         <h2>Meet on the starting grid.</h2>
-        <p className="muted">Create a private room and share its code, or enter a friend’s invitation. Cruise together or race one lap with nitro.</p>
+        <p className="muted">Create a private room and share its code, or enter a friend’s invitation. Cruise together, then race 1, 3 or 5 laps: trade paint, hide in a rival’s slipstream to charge your nitro, and grab the nitro gates.</p>
         <label>Driver name<input maxLength={18} value={name} onChange={(e) => setName(e.target.value)} autoComplete="nickname" disabled={busy} /></label>
         <label>Car<select value={game.store.get().carId} disabled={busy} onChange={(e) => { void game.selectCar(e.target.value); }}>
           {CARS.filter((c) => isCarUnlocked(c.id, game.profile)).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -44,7 +45,7 @@ export function MultiplayerLobby({ game }: { game: Game }) {
           <button className="btn" type="submit" disabled={busy || !name.trim() || code.length !== 6}>Join room</button>
         </form>
         {(error || network.error) && <p className="multiplayer-error" role="alert">{error || network.error}</p>}
-        <p className="faint">Cars pass through each other for smooth online racing. Room races are casual and do not change your solo records.</p>
+        <p className="faint">Bumping is on: cars push each other around. Send emotes with 1–4 and honk with H. Room races are casual and do not change your solo records.</p>
       </div>
     </div>
   </div>;
@@ -53,16 +54,28 @@ export function MultiplayerLobby({ game }: { game: Game }) {
 export function MultiplayerHud({ game }: { game: Game }) {
   const state = useSyncExternalStore(game.multiplayer.store.subscribe, game.multiplayer.store.get, game.multiplayer.store.get);
   const [message, setMessage] = useState("");
+  const [laps, setLaps] = useState(3);
   useTicker(10);
+  const inRoom = !!state.room;
+  // Emotes from the keyboard: 1-4, and H for the horn.
+  useEffect(() => {
+    if (!inRoom) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.repeat || (e.target as HTMLElement | null)?.tagName === "INPUT") return;
+      const i = e.code === "KeyH" ? HORN : e.code.startsWith("Digit") ? Number(e.code.slice(5)) - 1 : -1;
+      if (i >= 0 && i < EMOTES.length) game.multiplayer.emote(i);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [game, inRoom]);
   const room = state.room;
   if (!room) return state.error ? <div className="network-notice panel" role="status">{state.error}<button className="btn small" onClick={() => game.go("multiplayer")}>Rejoin</button></div> : null;
   const host = room.hostId === state.id;
   const racing = room.phase === "racing" || room.phase === "countdown";
-  const ranked = [...room.players].sort((a, b) => {
-    if (a.finishMs !== null || b.finishMs !== null) return (a.finishMs ?? Infinity) - (b.finishMs ?? Infinity);
-    return b.distance - a.distance;
-  });
+  const ranked = rankPlayers(room.players);
   const place = ranked.findIndex((p) => p.id === state.id) + 1;
+  const me = room.players.find((p) => p.id === state.id);
+  const raceLaps = room.laps ?? 1;
   const run = async (action: () => Promise<unknown>) => {
     setMessage("");
     try { await action(); } catch (err) { setMessage(err instanceof Error ? err.message : "Please try again."); }
@@ -73,21 +86,35 @@ export function MultiplayerHud({ game }: { game: Game }) {
     try { await navigator.clipboard.writeText(link.href); setMessage("Invitation link copied"); }
     catch { setMessage(`Share this code: ${room.code}`); }
   };
+  const showPlace = room.phase !== "practice";
   return <div className="multiplayer-hud panel">
-    <div className="mp-heading"><span className="eyebrow">{room.phase === "practice" ? "Drive together" : room.phase === "finished" ? "Race finished" : "1 lap race"}</span><strong>{place}<small>/{room.players.length}</small></strong></div>
+    <div className="mp-heading">
+      {showPlace ? (
+        <strong className="mp-place" aria-label={`Position ${place} of ${room.players.length}`}><b>{place}</b><sup>{ordinal(place).replace(/\d+/, "")}</sup><small>/{room.players.length}</small></strong>
+      ) : <span className="eyebrow">Drive together</span>}
+      {showPlace ? (
+        <span className="mp-lap" aria-label="Lap">{room.phase === "finished" ? "FINISHED" : <>LAP <b>{Math.min(raceLaps, (me?.lap ?? 0) + 1)}</b>/{raceLaps}</>}</span>
+      ) : <span className="faint">{room.players.length} in room</span>}
+    </div>
     <div className="mp-code"><span>ROOM <b>{room.code}</b></span><button onClick={() => { void copy(); }}>Copy invite</button></div>
+    {host && !racing && <div className="mp-laps" role="radiogroup" aria-label="Race length">
+      {LAP_CHOICES.map((n) => <button key={n} role="radio" aria-checked={laps === n} className={laps === n ? "on" : ""} onClick={() => setLaps(n)}>{n} {n === 1 ? "lap" : "laps"}</button>)}
+    </div>}
     <div className="mp-actions">
-      {host && !racing && <button className="btn small primary" disabled={room.players.length < 2 || room.players.some((p) => !p.ready)} onClick={() => { void run(() => game.multiplayer.startRace()); }}>{room.phase === "finished" ? "Race again" : "Start race"}</button>}
+      {host && !racing && <button className="btn small primary" disabled={room.players.length < 2 || room.players.some((p) => !p.ready)} onClick={() => { void run(() => game.multiplayer.startRace(laps)); }}>{room.phase === "finished" ? "Race again" : "Start race"}</button>}
       {host && racing && <button className="btn small" onClick={() => { void run(() => game.multiplayer.practice()); }}>End race</button>}
       {!host && !racing && <span className="faint">Waiting for host</span>}
-      <button className="btn small" onClick={() => { game.multiplayer.leave(); }}>Leave</button>
+      <button className="btn small" onClick={() => game.back()}>Leave</button>
     </div>
     <ol className="mp-standings" aria-label="Race standings">
       {ranked.map((player, index) => <li key={player.id} className={player.id === state.id ? "you" : ""}>
         <span className="mp-dot" style={{ background: player.color }} /><b>{index + 1}</b><span className="mp-name">{player.id === state.id ? `${player.name} · You` : player.name}</span>
-        <span>{player.finishMs !== null ? fmtTime(player.finishMs / 1000) : !player.ready ? "Loading" : racing ? `${Math.min(100, Math.max(0, Math.round(player.distance * 100)))}%` : player.id === room.hostId ? "Host" : "Ready"}</span>
+        <span>{player.finishMs !== null ? fmtTime(player.finishMs / 1000) : !player.ready ? "Loading" : racing ? `${Math.min(100, Math.max(0, Math.round((player.distance / raceLaps) * 100)))}%` : player.id === room.hostId ? "Host" : "Ready"}</span>
       </li>)}
     </ol>
+    <div className="mp-emotes" aria-label="Emotes">
+      {EMOTES.map((e, i) => <button key={e} title={i === HORN ? "Horn (H)" : `Emote (${i + 1})`} aria-label={i === HORN ? "Horn" : `Emote ${e}`} onClick={() => game.multiplayer.emote(i)}>{e}</button>)}
+    </div>
     {message && <div className="mp-message" role="status">{message}</div>}
   </div>;
 }

@@ -11,6 +11,13 @@ export const PHYSICS_HZ = 240;
 export const PHYSICS_DT = 1 / PHYSICS_HZ;
 const G = 9.81;
 const AIR_DENSITY = 1.225;
+/**
+ * Easy-driving balance: the rear tyres grip a little more than the fronts, so at the limit a car
+ * runs gently wide instead of spinning, and grip fades gradually past the limit, so slides are easy
+ * to catch.
+ */
+const REAR_GRIP = 1.12;
+const SLIDE_BONUS = 0.06;
 
 export interface DriverControls {
   throttle: number; // 0..1
@@ -49,7 +56,7 @@ export const DEFAULT_ASSISTS: DrivingAssists = {
 };
 
 export interface ImpactEvent {
-  kind: "rail" | "tree" | "rock" | "ground" | "bounds";
+  kind: "rail" | "tree" | "rock" | "ground" | "bounds" | "car";
   speed: number;
   x: number;
   y: number;
@@ -177,6 +184,10 @@ export class Vehicle {
   /** Road-wheel angle that full steering input currently maps to (speed-sensitive). */
   steerLockNow = 0.6;
   readonly impacts: ImpactEvent[] = [];
+  /** Moving obstacles refreshed every frame: the other players' cars in an online room. */
+  readonly dynamicColliders: CircleCollider[] = [];
+  /** 0..1: how much this car is in another car's slipstream (cuts air drag). */
+  draft = 0;
   /** Steps since the last collision with a barrier, tree or rock (for drift scoring). */
   stepsSinceContact = 1e9;
   private lastForceX = 0;
@@ -365,13 +376,16 @@ export class Vehicle {
 
   private processInputs(c: DriverControls, dt: number, forwardSpeed: number) {
     const a = this.assists;
+    // Nitro is a single button: holding it floors the throttle too (never while braking or reversing).
+    const nitroGas = !!c.nitro && this.nitro.enabled && this.nitro.ready && this.gear > 0 && c.brake < 0.1 && c.handbrake < 0.1;
+    const throttle = nitroGas ? 1 : c.throttle;
     // Pedals: on/off presses ramp in quickly but not instantly, like a real foot.
     if (c.digitalPedals) {
-      this.throttleState = approachRate(this.throttleState, c.throttle, 7, 12, dt);
+      this.throttleState = approachRate(this.throttleState, throttle, 7, 12, dt);
       this.brakeState = approachRate(this.brakeState, c.brake, 9, 14, dt);
       this.handbrakeState = approachRate(this.handbrakeState, c.handbrake, 14, 14, dt);
     } else {
-      this.throttleState = c.throttle;
+      this.throttleState = throttle;
       this.brakeState = c.brake;
       this.handbrakeState = c.handbrake;
     }
@@ -507,13 +521,12 @@ export class Vehicle {
     const sideslip = speed > 4 ? Math.atan2(latVel, Math.abs(forwardSpeed)) : 0;
     const escBrake = [0, 0, 0, 0];
     let escActive = false;
+    // The yaw rate the steering asks for, limited to what the tyres can deliver.
+    const maxYaw = (0.9 * spec.tyre.mu * G) / Math.max(speed, 1);
+    const targetYaw = clamp((forwardSpeed * delta) / (spec.wheelbase * (1 + 0.0022 * speed * speed)), -maxYaw, maxYaw);
     this.escThrottle = Math.min(1, this.escThrottle + dt * 2.5);
     if (this.assists.esc !== "off" && speed > 6 && this.gear !== -1) {
       const full = this.assists.esc === "full";
-      const L = spec.wheelbase;
-      let targetYaw = (forwardSpeed * delta) / (L * (1 + 0.0022 * speed * speed));
-      const maxYaw = (0.9 * spec.tyre.mu * G) / Math.max(speed, 1);
-      targetYaw = clamp(targetYaw, -maxYaw, maxYaw);
       const err = yawRate - targetYaw;
       const betaLimit = full ? 0.1 : 0.26;
       const yawTol = full ? 0.12 : 0.3;
@@ -699,10 +712,11 @@ export class Vehicle {
       const vx = pv.dot(wf);
       const vy = pv.dot(ws);
       const looseBonus = surf.paved ? 1 : 1 + (spec.tyre.looseBonus ?? 0);
-      const mu = loadedMu(spec.tyre.mu * surf.grip * looseBonus, w.load, this.refLoad, spec.tyre.loadSensitivity);
+      const axleGrip = w.front ? 1 : REAR_GRIP;
+      const mu = loadedMu(spec.tyre.mu * surf.grip * looseBonus * axleGrip, w.load, this.refLoad, spec.tyre.loadSensitivity);
       const peakSlip = spec.tyre.peakSlip * surf.peakScale;
       const peakAngle = Math.min(0.5, spec.tyre.peakAngle * Math.sqrt(surf.peakScale));
-      const slide = surf.paved ? spec.tyre.slide + (surf.slide - 0.76) : Math.max(surf.slide, spec.tyre.slide);
+      const slide = Math.min(0.97, (surf.paved ? spec.tyre.slide + (surf.slide - 0.76) : Math.max(surf.slide, spec.tyre.slide)) + SLIDE_BONUS);
       const R = w.radius;
       const tyreIn = tmpTyreIn;
       tyreIn.vx = vx;
@@ -770,7 +784,8 @@ export class Vehicle {
     // ---- aerodynamics
     const v2 = speed * speed;
     if (speed > 0.1) {
-      const drag = 0.5 * AIR_DENSITY * spec.aero.cdA * v2;
+      // Tucked into another car's slipstream, up to half the air resistance goes away.
+      const drag = 0.5 * AIR_DENSITY * spec.aero.cdA * v2 * (1 - 0.5 * this.draft);
       force.addScaledVector(this.vel, -drag / speed);
       const down = 0.5 * AIR_DENSITY * spec.aero.clA * v2;
       tmpF.copy(up).multiplyScalar(-down * spec.aero.frontShare);
@@ -781,6 +796,18 @@ export class Vehicle {
     if (inWater || this.pos.y < WATER_Y + 0.1) {
       force.addScaledVector(this.vel, -spec.mass * 1.6);
       inWater = true;
+    }
+
+    // ---- stability aid (with ESC on): keeps the car pointing where it is going. It trims rotation
+    // beyond what the steering asks for and bleeds off sideways sliding, smoothly, instead of
+    // braking single wheels. Events that switch ESC off keep the raw car for deliberate drifting.
+    const stab = this.assists.esc === "full" ? 1 : this.assists.esc === "sport" ? 0.6 : 0;
+    if (stab > 0 && onGround >= 3 && speed > 4 && this.gear !== -1) {
+      const over = sign(yawRate) === sign(targetYaw) ? sign(yawRate) * Math.max(0, Math.abs(yawRate) - Math.abs(targetYaw) - 0.04) : yawRate;
+      torque.addScaledVector(up, -over * this.inertia.y * 9 * stab);
+      const allowed = Math.tan(0.05) * Math.abs(forwardSpeed);
+      const excess = Math.abs(latVel) > allowed ? latVel - sign(latVel) * allowed : 0;
+      force.addScaledVector(this.left, -excess * spec.mass * 4.5 * stab);
     }
 
     // ---- integrate
@@ -895,19 +922,25 @@ export class Vehicle {
     return out.applyMatrix3(this.rot);
   }
 
-  /** Resolves a contact at `point` with normal `n` (pointing out of the obstacle). */
-  private contactImpulse(point: Vector3, n: Vector3, depth: number, restitution: number, friction: number): number {
+  /**
+   * Resolves a contact at `point` with normal `n` (pointing out of the obstacle). A moving obstacle
+   * passes its velocity; `share` is this car's part of the exchange (0.5 against another car of
+   * similar weight, whose own client resolves the other half).
+   */
+  private contactImpulse(point: Vector3, n: Vector3, depth: number, restitution: number, friction: number, ovx = 0, ovz = 0, share = 1): number {
     const r = tmpR.subVectors(point, this.pos);
     const v = this.pointVelocity(point, tmpCv);
+    v.x -= ovx;
+    v.z -= ovz;
     const vn = v.dot(n);
     if (depth > 0.005) {
-      const corr = Math.min(depth, 0.25) * 0.85;
+      const corr = Math.min(depth, 0.25) * 0.85 * share;
       this.pos.addScaledVector(n, corr);
     }
     if (vn >= 0) return 0;
     const rn = tmpRn.crossVectors(r, n);
     const k = 1 / this.spec.mass + this.invInertiaWorld(rn, tmpK).cross(r).dot(n);
-    const j = (-(1 + restitution) * vn) / k;
+    const j = ((-(1 + restitution) * vn) / k) * share;
     tmpImp.copy(n).multiplyScalar(j);
     // Friction along the sliding direction.
     const vt = tmpVt.copy(v).addScaledVector(n, -vn);
@@ -965,8 +998,9 @@ export class Vehicle {
       }
     }
 
-    // Trees and rocks: circles against the car's footprint rectangle.
+    // Trees, rocks and other players' cars: circles against the car's footprint rectangle.
     this.world.collidersNear(this.pos.x, this.pos.z, 4, colliders);
+    for (const c of this.dynamicColliders) if (Math.abs(c.x - this.pos.x) < 8 && Math.abs(c.z - this.pos.z) < 8) colliders.push(c);
     if (colliders.length) {
       const fx = this.fwd.x;
       const fz = this.fwd.z;
@@ -1009,9 +1043,11 @@ export class Vehicle {
         const wz = -(-nxL * hx + nzL * hz);
         tmpN.set(wx, 0, wz).normalize();
         tmpP2.set(this.pos.x + cx * hz + cz * hx, this.pos.y, this.pos.z - cx * hx + cz * hz);
-        const imp = this.contactImpulse(tmpP2, tmpN, pen, 0.12, 0.35);
+        const car = c.kind === "car";
+        // Cars trade a lively, even-handed bump; trees and rocks stop you dead.
+        const imp = car ? this.contactImpulse(tmpP2, tmpN, pen, 0.35, 0.15, c.vx, c.vz, 0.5) : this.contactImpulse(tmpP2, tmpN, pen, 0.12, 0.35);
         this.stepsSinceContact = 0;
-        if (imp > 0.4) this.impacts.push({ kind: c.kind === "tree" ? "tree" : "rock", speed: imp, x: tmpP2.x, y: tmpP2.y, z: tmpP2.z });
+        if (imp > 0.4) this.impacts.push({ kind: car ? "car" : c.kind === "tree" ? "tree" : "rock", speed: imp, x: tmpP2.x, y: tmpP2.y, z: tmpP2.z });
       }
     }
 

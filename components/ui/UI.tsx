@@ -52,9 +52,14 @@ export function UI({ game, state }: { game: Game; state: UIState }) {
           {!state.paused && <MultiplayerHud game={game} />}
           {touch && !state.paused && !state.showResults && <TouchControls game={game} />}
           {!touch && !state.paused && !state.showResults && (
-            <button className="icon-btn pause-btn" style={{ top: "auto", bottom: 16, right: "auto", left: "50%", transform: "translateX(-50%)", position: "absolute", opacity: 0.6 }} aria-label="Pause" onClick={() => game.pause()}>
-              ❚❚
-            </button>
+            <div className="drive-btns">
+              <button className="icon-btn" aria-label="Back to menu" title="Back to menu" onClick={() => game.back()}>
+                ←
+              </button>
+              <button className="icon-btn" aria-label="Pause" title="Pause (Esc)" onClick={() => game.pause()}>
+                ❚❚
+              </button>
+            </div>
           )}
           {state.paused && !state.settingsOpen && !state.helpOpen && <PauseMenu game={game} />}
           {state.showResults && state.results && <ResultsView game={game} state={state} />}

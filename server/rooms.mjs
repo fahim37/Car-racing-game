@@ -4,6 +4,9 @@ import { Server } from "socket.io";
 const CARS = new Set(["meridian", "vela", "brute", "strale", "nocturne", "volterra"]);
 const COLORS = ["#f2ad50", "#5ad8ef", "#ef718d", "#91d575", "#bb9afa", "#f4de73", "#69dbc3", "#e6edf3"];
 const LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const LAP_CHOICES = new Set([1, 3, 5]);
+/** Emote indices clients may send (see EMOTES in game/network/Multiplayer.ts). */
+const EMOTE_COUNT = 5;
 
 export function createRoomServer(httpServer, { path = "/socket.io", now = Date.now } = {}) {
   const rooms = new Map();
@@ -17,8 +20,8 @@ export function createRoomServer(httpServer, { path = "/socket.io", now = Date.n
       catch { done(null, false); }
     },
   });
-  const member = (p) => ({ id: p.id, name: p.name, carId: p.carId, color: p.color, ready: p.ready, distance: p.distance, finishMs: p.finishMs });
-  const serialize = (r) => ({ code: r.code, hostId: r.hostId, phase: r.phase, raceId: r.raceId, startAt: r.startAt, serverTime: now(), players: [...r.players.values()].map(member) });
+  const member = (p) => ({ id: p.id, name: p.name, carId: p.carId, color: p.color, ready: p.ready, distance: p.distance, lap: p.lap, finishMs: p.finishMs });
+  const serialize = (r) => ({ code: r.code, hostId: r.hostId, phase: r.phase, raceId: r.raceId, laps: r.laps, startAt: r.startAt, serverTime: now(), players: [...r.players.values()].map(member) });
   const publish = (r) => io.to(r.code).emit("room", serialize(r));
   function leave(socket) {
     const r = rooms.get(socket.data.code);
@@ -34,7 +37,7 @@ export function createRoomServer(httpServer, { path = "/socket.io", now = Date.n
   }
   function addPlayer(socket, r, data) {
     const taken = new Set([...r.players.values()].map((p) => p.color));
-    const p = { id: socket.id, name: data.name.trim().replace(/[<>\u0000-\u001f]/g, "").slice(0, 18) || "Driver", carId: CARS.has(data.carId) ? data.carId : "meridian", color: COLORS.find((c) => !taken.has(c)) ?? COLORS[0], ready: false, state: null, lastPacket: 0, lastProgress: null, started: false, checkpoint: 0, distance: 0, finishMs: null };
+    const p = { id: socket.id, name: data.name.trim().replace(/[<>\u0000-\u001f]/g, "").slice(0, 18) || "Driver", carId: CARS.has(data.carId) ? data.carId : "meridian", color: COLORS.find((c) => !taken.has(c)) ?? COLORS[0], ready: false, state: null, lastPacket: 0, lastProgress: null, started: false, checkpoint: 0, distance: 0, lap: 0, finishMs: null, lastEmote: 0 };
     r.players.set(socket.id, p);
     socket.data.code = r.code;
     socket.join(r.code);
@@ -57,7 +60,7 @@ export function createRoomServer(httpServer, { path = "/socket.io", now = Date.n
             if (rooms.size >= 100) return fail("All rooms are busy. Please try again shortly.");
             let code;
             do { code = Array.from({ length: 6 }, () => LETTERS[randomInt(LETTERS.length)]).join(""); } while (rooms.has(code));
-            r = { code, hostId: socket.id, phase: "practice", raceId: 0, startAt: 0, activeAt: now(), players: new Map() };
+            r = { code, hostId: socket.id, phase: "practice", raceId: 0, laps: 1, startAt: 0, activeAt: now(), players: new Map() };
             rooms.set(code, r);
           } else {
             const code = typeof data.code === "string" ? data.code.trim().toUpperCase() : "";
@@ -84,9 +87,10 @@ export function createRoomServer(httpServer, { path = "/socket.io", now = Date.n
             if (r.players.size < 2 || [...r.players.values()].some((v) => !v.ready)) return fail("Wait for at least two drivers to load the track.");
             r.phase = "countdown";
             r.raceId++;
+            r.laps = LAP_CHOICES.has(data?.laps) ? data.laps : 1;
             r.startAt = now() + 5000;
             for (const v of r.players.values()) {
-              v.started = false; v.checkpoint = 0; v.distance = -0.02; v.finishMs = null; v.lastProgress = null;
+              v.started = false; v.checkpoint = 0; v.distance = -0.02; v.lap = 0; v.finishMs = null; v.lastProgress = null;
             }
           } else r.phase = "practice";
         }
@@ -116,11 +120,24 @@ export function createRoomServer(httpServer, { path = "/socket.io", now = Date.n
           p.distance += delta;
           const crossed = delta > 0 && p.lastProgress > 0.85 && s.progress < 0.15;
           if (crossed && !p.started) { p.started = true; p.distance = s.progress; }
-          else if (crossed && p.started && p.checkpoint === 3 && t - r.startAt > 10000) p.finishMs = t - r.startAt;
-          else if (p.started && p.checkpoint < 3 && p.lastProgress < (p.checkpoint + 1) / 4 && s.progress >= (p.checkpoint + 1) / 4) p.checkpoint++;
+          else if (crossed && p.started && p.checkpoint === 3 && t - r.startAt > 10000) {
+            // A full lap: every quarter of the track passed in order.
+            p.lap++;
+            p.checkpoint = 0;
+            if (p.lap >= r.laps) p.finishMs = t - r.startAt;
+          } else if (p.started && p.checkpoint < 3 && p.lastProgress < (p.checkpoint + 1) / 4 && s.progress >= (p.checkpoint + 1) / 4) p.checkpoint++;
         }
       }
       p.lastProgress = s.progress;
+    });
+    // Quick emotes (and the horn), shared with the room; at most a few per second per driver.
+    socket.on("player:emote", (e) => {
+      const r = rooms.get(socket.data.code);
+      const p = r?.players.get(socket.id);
+      const t = now();
+      if (!r || !p || !Number.isInteger(e) || e < 0 || e >= EMOTE_COUNT || t - p.lastEmote < 700) return;
+      p.lastEmote = t;
+      io.to(r.code).emit("emote", { id: socket.id, e });
     });
     socket.on("room:leave", () => leave(socket));
     socket.on("disconnect", () => leave(socket));
@@ -135,7 +152,7 @@ export function createRoomServer(httpServer, { path = "/socket.io", now = Date.n
         continue;
       }
       if (r.phase === "countdown" && t >= r.startAt) { r.phase = "racing"; publish(r); }
-      if (r.phase === "racing" && ([...r.players.values()].every((p) => p.finishMs !== null) || t - r.startAt > 10 * 60 * 1000)) { r.phase = "finished"; publish(r); }
+      if (r.phase === "racing" && ([...r.players.values()].every((p) => p.finishMs !== null) || t - r.startAt > Math.max(10, 4 + 3 * r.laps) * 60 * 1000)) { r.phase = "finished"; publish(r); }
       io.to(r.code).volatile.emit("snapshot", { serverTime: t, players: [...r.players.values()].filter((p) => p.ready && p.state).map((p) => ({ ...member(p), state: p.state })) });
     }
   }, 1000 / 15);

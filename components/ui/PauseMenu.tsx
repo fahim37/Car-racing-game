@@ -36,8 +36,8 @@ export function PauseMenu({ game }: { game: Game }) {
         <button className="btn" onClick={() => game.store.set({ helpOpen: true })}>
           Controls &amp; tips
         </button>
-        <button className="btn ghost" onClick={() => game.quitToMenu()}>
-          Quit to events
+        <button className="btn ghost" onClick={() => game.back()}>
+          {game.multiplayer.room ? "Leave room" : "Back to menu"}
         </button>
       </div>
     </div>

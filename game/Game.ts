@@ -15,7 +15,7 @@ import { RoadView, loadRoadTextures } from "./render/RoadView";
 import { TerrainView, loadTerrainTextures } from "./render/TerrainView";
 import { VegetationView } from "./render/VegetationView";
 import { WaterView } from "./render/WaterView";
-import { GrassView } from "./render/GrassView";
+import { NitroGates } from "./render/NitroGates";
 import { EventRecord, Medal, Profile, Settings, assistTier, betterMedal, clearGhosts, loadGhost, loadProfile, saveGhost, saveProfile } from "./save/profile";
 import { EVENTS, EventDef, eventById, isCarUnlocked, isUnlocked } from "./session/events";
 import { GhostData, decodeGhost, encodeGhost, ghostPoseAt } from "./session/Ghost";
@@ -23,9 +23,9 @@ import { Results, Session, Toast, computeTargets } from "./session/Session";
 import { Spawn } from "./session/lessons";
 import { Store } from "./store";
 import { RacingLine, computeRacingLine, lineOffsetAt } from "./track/racingLine";
-import { clamp, smoothstep } from "./util/math";
+import { clamp, formatTime as fmtClock, smoothstep } from "./util/math";
 import { World, WATER_Y, setWorld } from "./world/World";
-import { Multiplayer, Room } from "./network/Multiplayer";
+import { EMOTES, HORN, Multiplayer, Room, ordinal, rankPlayers } from "./network/Multiplayer";
 import { RemoteCars } from "./render/RemoteCars";
 
 export type Screen = "loading" | "title" | "events" | "garage" | "briefing" | "driving" | "multiplayer" | "error";
@@ -83,10 +83,15 @@ export interface Hud {
   camera: string;
   wrongSurface: boolean;
   nitro: { enabled: boolean; charge: number; active: boolean };
+  /** 0..1 slipstream behind an online rival. */
+  draft: number;
 }
 
 const tmpV = new THREE.Vector3();
 const tmpSun = new THREE.Vector3();
+
+/** Share of a full nitro tank that one gate gives back. */
+const NITRO_GATE_REFILL = 0.4;
 
 /** Menus, free drive and multiplayer: warm, low golden-hour sun. */
 const DEFAULT_CONDITIONS: Conditions = { time: "afternoon", weather: "dry" };
@@ -108,7 +113,7 @@ export class Game {
   vegetation!: VegetationView;
   props!: PropsView;
   effects!: Effects;
-  grass: GrassView | null = null;
+  nitroGates!: NitroGates;
   cameraRig!: CameraRig;
   hud: Hud;
   mapPath: { x: number; z: number }[] = [];
@@ -134,6 +139,9 @@ export class Game {
   private raf = 0;
   private disposed = false;
   private resultsTimer = 0;
+  private wasBoosting = false;
+  /** 0..1 eased nitro boost, for the speed blur. */
+  private boostFx = 0;
   private envSample = { nearWater: 0, forest: 0, t: 0 };
   private resizeObs: ResizeObserver | null = null;
   private busy = false;
@@ -173,6 +181,7 @@ export class Game {
       eventsFilter: "all",
     });
     this.hud = this.emptyHud();
+    this.multiplayer.onEmote = this.onEmote;
   }
 
   static async create(canvas: HTMLCanvasElement) {
@@ -251,11 +260,13 @@ export class Game {
     await this.nextFrame();
     this.vegetation = await VegetationView.load(this.world, this.renderer.renderer, { density: q.vegetationDensity, nearScale: q.nearScale });
     this.scene.add(this.vegetation.group);
-    this.buildGrass();
     this.props = new PropsView(this.world);
     this.scene.add(this.props.group);
     this.effects = new Effects();
     this.scene.add(this.effects.group);
+    this.nitroGates = new NitroGates(this.world.track, this.world);
+    this.nitroGates.group.visible = false;
+    this.scene.add(this.nitroGates.group);
     this.cameraRig = new CameraRig(this.world);
     this.applyCameraSettings();
     this.resize();
@@ -457,6 +468,7 @@ export class Game {
       v.wetness = cond.weather === "wet" ? 1 : 0;
       v.nitro.enabled = ev.kind === "free";
       v.nitro.reset();
+      this.nitroGates.reset();
       const line = this.getLine(spec, cond.weather === "wet");
       const key = `${spec.id}|${cond.weather}`;
       if (key !== this.lineKey) {
@@ -579,6 +591,12 @@ export class Game {
     this.go("events");
   }
 
+  /** Leaves the drive for the screen it was started from (online: leaves the room, back to the lobby). */
+  back() {
+    if (this.multiplayer.room) this.go("multiplayer");
+    else this.go(this.session?.event.kind === "free" ? "title" : "events");
+  }
+
   cycleCamera() {
     const i = CAMERA_MODES.indexOf(this.cameraRig.mode);
     const mode = CAMERA_MODES[(i + 1) % CAMERA_MODES.length];
@@ -610,20 +628,7 @@ export class Game {
     this.persist();
   }
 
-  private buildGrass() {
-    if (this.grass) {
-      this.scene.remove(this.grass.mesh);
-      this.grass.dispose();
-      this.grass = null;
-    }
-    const q = this.renderer.quality.grass;
-    if (!q) return;
-    this.grass = new GrassView(this.world, q);
-    this.scene.add(this.grass.mesh);
-  }
-
   private async rebuildVegetation() {
-    this.buildGrass();
     const q = this.renderer.quality;
     this.scene.remove(this.vegetation.group);
     this.vegetation = await VegetationView.load(this.world, this.renderer.renderer, { density: q.vegetationDensity, nearScale: q.nearScale });
@@ -737,6 +742,7 @@ export class Game {
     }
     const frameStart = performance.now();
     this.profMark = frameStart;
+    if (v) this.updateRivals(v, driving && !ui.paused, dt);
     if (driving && !ui.paused && v && this.session) {
       this.acc += dt;
       let steps = 0;
@@ -801,11 +807,22 @@ export class Game {
     this.env.update(v && driving ? v.pos : cam.position);
     this.terrain.update(cam.position, this.renderer.quality.lodBias);
     this.vegetation.update(cam.position, this.time, this.conditions.weather === "wet" ? 1.6 : 1);
-    this.grass?.update(cam.position, this.time, this.conditions.weather === "wet" ? 1.6 : 1);
     cam.updateMatrixWorld();
     this.vegetation.updateNear(cam, v && driving ? v.pos : cam.position);
     const wet = this.conditions.weather === "wet" ? 1 : 0;
     this.effects.update(driving ? v : null, dt, this.time, cam.position, wet, this.canvas.clientHeight * Math.min(2, window.devicePixelRatio || 1));
+    // Nitro gates top up the tank when the car drives through a charged one.
+    const gatesOn = driving && !!v && v.nitro.enabled;
+    this.nitroGates.group.visible = gatesOn;
+    if (this.nitroGates.update(dt, this.time, gatesOn && !ui.paused && v ? { s: v.telemetry.s, d: v.telemetry.d } : null) && v) {
+      v.nitro.refill(NITRO_GATE_REFILL);
+      this.session?.toast(`Nitro +${Math.round(NITRO_GATE_REFILL * 100)}%`, "good", 1.4);
+      this.audio.pickup();
+    }
+    const boosting = driving && !ui.paused && !!v && v.nitro.active;
+    if (boosting && !this.wasBoosting) this.audio.boost();
+    this.wasBoosting = boosting;
+    this.boostFx += ((boosting ? 1 : 0) - this.boostFx) * Math.min(1, dt * (boosting ? 6 : 3));
     this.water.update(this.time, this.env.sunDir, this.env.sun.color, wet);
     if (this.session && v) {
       const mode = this.settings.learning.racingLine;
@@ -816,15 +833,94 @@ export class Game {
     // Audio
     this.sampleEnvironment(cam.position, dt);
     this.audio.update(driving && !ui.paused ? v : null, dt, { nearWater: this.envSample.nearWater, forest: this.envSample.forest, rain: wet, wind: wet ? 1.4 : 1 }, driving && !ui.paused);
+    cam.getWorldDirection(tmpV);
+    this.audio.updateRivals(driving && !ui.paused && this.multiplayer.room && this.opponents ? this.opponents.states : null, { x: cam.position.x, y: cam.position.y, z: cam.position.z, fx: tmpV.x, fy: tmpV.y, fz: tmpV.z });
     if (v) v.impacts.length = 0;
 
     this.updateHud(driving);
     this.updateSunGlare(cam);
     this.profStep("world");
     this.renderer.trackFrame(dt);
-    this.renderer.render(this.scene, cam, driving && v ? v.telemetry.speed : 0);
+    this.renderer.render(this.scene, cam, driving && v ? v.telemetry.speed : 0, this.boostFx);
     this.profStep("render");
     this.prof.frame = this.prof.frame * 0.95 + (performance.now() - frameStart) * 0.05;
+  };
+
+  /**
+   * Online rivals: their cars become solid obstacles for bumping, sitting in one's slipstream cuts
+   * drag and charges nitro, and the race calls out overtakes and the finish.
+   */
+  private updateRivals(v: Vehicle, active: boolean, dt: number) {
+    const rivals = this.multiplayer.room && active ? this.opponents : null;
+    if (!rivals) {
+      v.dynamicColliders.length = 0;
+      v.draft = 0;
+      return;
+    }
+    rivals.colliders(v.dynamicColliders);
+    // Slipstream: a car 4-30 m ahead, nearly in line and heading the same way.
+    let draft = 0;
+    const fl = Math.hypot(v.fwd.x, v.fwd.z) || 1;
+    const fx = v.fwd.x / fl;
+    const fz = v.fwd.z / fl;
+    if (v.telemetry.speed > 15) {
+      for (const c of rivals.states) {
+        const dx = c.x - v.pos.x;
+        const dz = c.z - v.pos.z;
+        const ahead = dx * fx + dz * fz;
+        const side = Math.abs(dx * fz - dz * fx);
+        if (ahead < 4 || ahead > 30 || side > 2.6 || c.fx * fx + c.fz * fz < 0.9) continue;
+        draft = Math.max(draft, (1 - (ahead - 4) / 26) * (1 - side / 2.6));
+      }
+    }
+    v.draft += (draft - v.draft) * Math.min(1, dt * 4);
+    if (v.draft > 0.05 && v.nitro.enabled) v.nitro.refill(v.draft * 0.08 * dt);
+    this.raceCallouts();
+  }
+
+  private mpRace = { raceId: -1, place: 0, pending: 0, since: 0, finished: false };
+
+  /** Toasts for overtakes, being passed and the finish. */
+  private raceCallouts() {
+    const net = this.multiplayer.store.get();
+    const room = net.room;
+    const ses = this.session;
+    if (!room || !ses) return;
+    const m = this.mpRace;
+    if (room.raceId !== m.raceId) Object.assign(m, { raceId: room.raceId, place: 0, pending: 0, since: 0, finished: false });
+    if (room.phase !== "racing" && room.phase !== "finished") return;
+    const place = rankPlayers(room.players).findIndex((p) => p.id === net.id) + 1;
+    const me = room.players.find((p) => p.id === net.id);
+    if (!me || !place) return;
+    if (me.finishMs !== null && !m.finished) {
+      m.finished = true;
+      ses.toast(`You finished ${ordinal(place)}!  ${fmtClock(me.finishMs / 1000)}`, place === 1 ? "good" : "sector", 4);
+      this.audio.pickup();
+      return;
+    }
+    // Only once over the line, and only for a position held for a moment (no flicker side by side).
+    if (m.finished || me.distance <= 0.01 || room.players.length < 2) return;
+    if (place !== m.pending) {
+      m.pending = place;
+      m.since = this.time;
+    } else if (place !== m.place && this.time - m.since > 0.6) {
+      if (m.place) {
+        if (place < m.place) ses.toast(`Overtake! ${ordinal(place)}`, "good", 1.6);
+        else ses.toast(`Passed. ${ordinal(place)}`, "bad", 1.4);
+      }
+      m.place = place;
+    }
+  }
+
+  /** An emote from anyone in the room: a bubble over their car, a toast and, for the horn, a honk. */
+  private onEmote = (playerId: string, emote: number) => {
+    const net = this.multiplayer.store.get();
+    const who = net.room?.players.find((p) => p.id === playerId);
+    if (!who) return;
+    const mine = playerId === net.id;
+    if (!mine) this.opponents?.showEmote(playerId, EMOTES[emote]);
+    if (emote === HORN) this.audio.horn(mine ? 1 : 0.6);
+    this.session?.toast(`${mine ? "You" : who.name}  ${EMOTES[emote]}`, "info", 1.6);
   };
 
   /** Tells the final pass where the sun is on screen; it fades out as the sun leaves the frame. */
@@ -893,6 +989,7 @@ export class Game {
       camera: "Chase",
       wrongSurface: false,
       nitro: { enabled: false, charge: 1, active: false },
+      draft: 0,
     };
   }
 
@@ -940,6 +1037,7 @@ export class Game {
     h.camera = CAMERA_LABELS[this.cameraRig.mode];
     h.wrongSurface = t.wheelsOnRoad === 0 && t.wheelsOnGround > 0;
     h.nitro = { enabled: v.nitro.enabled, charge: v.nitro.charge, active: v.nitro.active };
+    h.draft = v.draft;
     tmpV.set(0, 0, 0);
   }
 

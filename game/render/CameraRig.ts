@@ -76,7 +76,7 @@ export class CameraRig {
     const s = this.settings;
 
     // FOV widens a little with speed (subtle sense of pace).
-    const targetFov = s.fov + Math.min(1, speed / 55) * s.speedFov + (this.mode === "cockpit" ? -4 : 0);
+    const targetFov = s.fov + Math.min(1, speed / 55) * s.speedFov + (this.mode === "cockpit" ? -4 : 0) + (v.nitro.active ? 9 : 0);
     cam.fov += (targetFov - cam.fov) * dampFactor(3, dt);
 
     // Camera shake: road texture at speed plus impacts; never large.

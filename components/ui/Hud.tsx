@@ -293,8 +293,13 @@ export function Hud({ game, touch }: { game: Game; touch: boolean }) {
       {/* Speed */}
       <div className="hud-br">
         <div className="speed-side">
-          {h.nitro.enabled && <div className={`chip nitro-meter ${h.nitro.active ? "boosting" : ""}`}>
-            <div className="nitro-label"><span>{h.nitro.active ? "BOOST" : "NITRO"}</span><span>{touch ? "Hold Nitro + Gas" : "Hold N + accelerate"}</span></div>
+          {h.draft > 0.15 && (
+            <div className="chip slipstream" role="status">
+              SLIPSTREAM <i style={{ width: `${Math.round(h.draft * 100)}%` }} />
+            </div>
+          )}
+          {h.nitro.enabled &&<div className={`chip nitro-meter ${h.nitro.active ? "boosting" : ""}`}>
+            <div className="nitro-label"><span>{h.nitro.active ? "BOOST" : "NITRO"}</span><span>{touch ? "Hold Nitro" : "Hold N to boost"}</span></div>
             <div role="progressbar" aria-label="Nitro charge" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(h.nitro.charge * 100)}><i style={{ width: `${h.nitro.charge * 100}%` }} /></div>
           </div>}
           <div className="aids">

@@ -251,13 +251,14 @@ export interface CarUnlock {
   text: string;
 }
 
+/** Every car is open from the start. */
 export const CAR_UNLOCKS: CarUnlock[] = [
   { carId: "meridian", rule: [], text: "" },
   { carId: "vela", rule: [], text: "" },
-  { carId: "strale", rule: [{ event: "tt-morning", medal: "bronze" }, { event: "sprint-forest", medal: "bronze" }], text: "Take bronze in the Lakeshore Time Trial or the Fern Esses Sprint." },
-  { carId: "brute", rule: [{ event: "drift-lakeside", medal: "bronze" }, { event: "lesson-drift" }], text: "Complete Drift Basics, or take bronze in the Lakeside Drift Challenge." },
-  { carId: "nocturne", rule: [{ event: "tt-morning", medal: "silver" }, { event: "tt-afternoon", medal: "bronze" }], text: "Take silver in the Lakeshore Time Trial, or bronze in Golden Hour Hot Laps." },
-  { carId: "volterra", rule: [{ event: "tt-morning", medal: "gold" }, { event: "tt-rain", medal: "bronze" }, { event: "sprint-forest", medal: "gold" }], text: "Take gold in the Lakeshore Time Trial or Fern Esses Sprint, or bronze in the Dusk Rain Trial." },
+  { carId: "strale", rule: [], text: "" },
+  { carId: "brute", rule: [], text: "" },
+  { carId: "nocturne", rule: [], text: "" },
+  { carId: "volterra", rule: [], text: "" },
 ];
 
 export function isCarUnlocked(carId: string, profile: Profile) {

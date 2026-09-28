@@ -103,6 +103,9 @@ export function TouchControls({ game }: { game: Game }) {
       <Pedal className="handbrake" label="Hand" onChange={(v) => input.setTouch({ handbrake: v })} />
       {game.vehicle?.nitro.enabled && <Pedal className="nitro-pedal" label="Nitro" onChange={(v) => input.setTouch({ nitro: !!v })} />}
 
+      <button className="icon-btn back-btn" aria-label="Back to menu" onClick={() => game.back()}>
+        ←
+      </button>
       <div className="top-btns">
         <button className="icon-btn fullscreen-btn" aria-label="Enter fullscreen" onClick={() => { void requestGameFullscreen(); }}>
           ⛶
