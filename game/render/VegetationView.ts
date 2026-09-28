@@ -28,7 +28,8 @@ interface NearSet {
   colors: Float32Array;
 }
 
-const TREE_SPECIES: Species[] = ["pine_a", "pine_b", "pine_c", "pine_d", "birch"];
+const TREE_SPECIES: Species[] = ["pine_a", "pine_b", "pine_c", "pine_d", "birch", "palm"];
+const isTree = (s: Species) => (TREE_SPECIES as string[]).includes(s);
 
 const windUniforms = { uTime: { value: 0 }, uWind: { value: 1 } };
 
@@ -99,7 +100,7 @@ export class VegetationView {
       for (const p of model.parts) {
         const isLeaves = (p.material as THREE.MeshStandardMaterial).alphaTest > 0;
         const mat = (p.material as THREE.MeshStandardMaterial).clone();
-        addWind(mat, isLeaves ? 1 : 0.3, `${id}-${isLeaves ? "l" : "b"}`);
+        addWind(mat, model.wind ?? (isLeaves ? 1 : 0.3), `${id}-${isLeaves ? "l" : "b"}`);
         p.material = mat;
       }
       this.models.set(id, model);
@@ -143,15 +144,16 @@ export class VegetationView {
       list.push(p);
     }
 
-    // Near sets: one instanced mesh per model part, refilled as the camera moves.
-    const radiusFor = (s: Species) =>
-      (s.startsWith("pine") || s === "birch" ? 125 : s === "rock_big" ? 220 : s === "rocks" ? 180 : s === "bush" || s === "bushes" ? 110 : 100) * this.nearScale;
+    // Near sets: one instanced mesh per model part, refilled as the camera moves. Trees are sparse,
+    // so they stay full-detail out to a long way and impostors only fill the far distance.
+    const radiusFor = (s: Species) => (isTree(s) ? 300 : s === "rock_big" ? 220 : s === "rocks" ? 180 : s === "bush" || s === "bushes" ? 130 : 100) * this.nearScale;
     for (const [id, model] of this.models) {
       const [species, variantStr] = id.split(":") as [Species, string];
       const variant = +variantStr;
       const all = plants.filter((p) => p.species === species && p.variant === variant);
       const radius = radiusFor(species);
-      const capacity = Math.max(1, Math.min(all.length, Math.ceil(Math.PI * radius * radius * this.densityPerM2(all) * 1.6) + 60));
+      // Small sets are clustered in groves, so size them for every instance rather than the average density.
+      const capacity = Math.max(1, all.length <= 4000 ? all.length : Math.min(all.length, Math.ceil(Math.PI * radius * radius * this.densityPerM2(all) * 1.6) + 60));
       // All parts of a model share one set of instance buffers.
       const matrices = new Float32Array(capacity * 16);
       const colors = new Float32Array(capacity * 3);
@@ -290,6 +292,7 @@ if (distance(io.xz, uCamPos.xz) < uNearRadius) transformed *= 0.0;`,
 
   private tint(species: Species, t: number, out: THREE.Color) {
     if (species.startsWith("rock")) return out.setRGB(0.85 + t * 0.2, 0.85 + t * 0.2, 0.85 + t * 0.2);
+    if (species === "palm") return out.setRGB(0.92 + t * 0.16, 0.92 + t * 0.1, 0.78 + (1 - t) * 0.14);
     // warmer / cooler greens
     return out.setRGB(0.82 + t * 0.25, 0.88 + t * 0.14, 0.8 + (1 - t) * 0.18);
   }

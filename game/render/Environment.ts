@@ -18,15 +18,18 @@ interface Preset {
   shadows: boolean;
   hazeStrength: number;
   headlights: boolean;
+  /** Fog / haze tint (multiplies the sky's horizon colour). */
   tint: THREE.Color;
+  /** Multiplies the sunlight colour measured from the sky. */
+  sunTint: THREE.Color;
   grade: Grade;
 }
 
 const v3 = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 
 /**
- * Lighting and grading per time of day. The grade is deliberately rich and a little dark:
- * deep shadows, warm highlights and cooler shadows, a soft vignette.
+ * Lighting and grading per time of day. Dry days are golden: warm low sunlight, sunlit
+ * yellow-green hills, soft warm shadows, a hazy glow and lens glare when driving into the sun.
  */
 function preset(c: Conditions): Preset {
   const wet = c.weather === "wet";
@@ -42,9 +45,10 @@ function preset(c: Conditions): Preset {
       hazeStrength: 0.2,
       headlights: dusk,
       tint: new THREE.Color(dusk ? 0x9aa6bd : 0xd6dde6),
+      sunTint: new THREE.Color(0xffffff),
       grade: dusk
-        ? { exposure: 0.8, contrast: 1.1, saturation: 0.9, vignette: 0.38, lift: v3(0.94, 0.98, 1.06), gain: v3(1.0, 0.99, 0.98) }
-        : { exposure: 0.95, contrast: 1.08, saturation: 0.95, vignette: 0.3, lift: v3(0.97, 1.0, 1.03), gain: v3(1.0, 1.0, 1.0) },
+        ? { exposure: 0.8, contrast: 1.1, saturation: 0.9, vignette: 0.38, lift: v3(0.94, 0.98, 1.06), gain: v3(1.0, 0.99, 0.98), white: v3(1, 1, 1), flare: 0, bloom: 0.15 }
+        : { exposure: 0.95, contrast: 1.08, saturation: 0.95, vignette: 0.3, lift: v3(0.97, 1.0, 1.03), gain: v3(1.0, 1.0, 1.0), white: v3(1, 1, 1), flare: 0, bloom: 0.15 },
     };
   }
   switch (c.time) {
@@ -52,27 +56,29 @@ function preset(c: Conditions): Preset {
       return {
         hdr: "qwantani_morning_puresky",
         sunAzimuth: Math.PI * 0.82,
-        sunIntensity: 2.8,
-        envIntensity: 0.95,
-        fogDensity: 0.0006,
+        sunIntensity: 3.2,
+        envIntensity: 0.9,
+        fogDensity: 0.0005,
         shadows: true,
-        hazeStrength: 0.85,
+        hazeStrength: 0.9,
         headlights: false,
-        tint: new THREE.Color(0xffffff),
-        grade: { exposure: 0.74, contrast: 1.14, saturation: 1.14, vignette: 0.34, lift: v3(0.95, 0.99, 1.05), gain: v3(1.05, 1.01, 0.95) },
+        tint: new THREE.Color(1.03, 1.0, 0.93),
+        sunTint: new THREE.Color(1.0, 0.94, 0.82),
+        grade: { exposure: 0.78, contrast: 1.07, saturation: 1.15, vignette: 0.3, lift: v3(1.0, 1.0, 0.97), gain: v3(1.05, 1.0, 0.92), white: v3(1.02, 1.0, 0.96), flare: 0.8, bloom: 0.3 },
       };
     case "afternoon":
       return {
         hdr: "qwantani_late_afternoon_puresky",
         sunAzimuth: -0.55,
-        sunIntensity: 3.2,
-        envIntensity: 0.9,
-        fogDensity: 0.00048,
+        sunIntensity: 3.8,
+        envIntensity: 0.85,
+        fogDensity: 0.00045,
         shadows: true,
-        hazeStrength: 0.7,
+        hazeStrength: 1.0,
         headlights: false,
-        tint: new THREE.Color(0xffffff),
-        grade: { exposure: 0.7, contrast: 1.16, saturation: 1.16, vignette: 0.36, lift: v3(0.94, 0.98, 1.05), gain: v3(1.08, 1.01, 0.92) },
+        tint: new THREE.Color(1.06, 1.0, 0.88),
+        sunTint: new THREE.Color(1.0, 0.9, 0.72),
+        grade: { exposure: 0.8, contrast: 1.06, saturation: 1.18, vignette: 0.32, lift: v3(1.02, 1.0, 0.95), gain: v3(1.06, 1.0, 0.9), white: v3(1.04, 1.0, 0.94), flare: 1, bloom: 0.38 },
       };
     default:
       return {
@@ -85,7 +91,8 @@ function preset(c: Conditions): Preset {
         hazeStrength: 1.0,
         headlights: true,
         tint: new THREE.Color(0xffffff),
-        grade: { exposure: 0.95, contrast: 1.18, saturation: 1.08, vignette: 0.42, lift: v3(0.93, 0.97, 1.07), gain: v3(1.06, 0.99, 0.94) },
+        sunTint: new THREE.Color(0xffffff),
+        grade: { exposure: 0.95, contrast: 1.18, saturation: 1.08, vignette: 0.42, lift: v3(0.93, 0.97, 1.07), gain: v3(1.06, 0.99, 0.94), white: v3(1.02, 1.0, 0.96), flare: 0.6, bloom: 0.3 },
       };
   }
 }
@@ -201,6 +208,8 @@ export class Environment {
   readonly sun: THREE.DirectionalLight;
   readonly hemi: THREE.HemisphereLight;
   readonly sunDir = new THREE.Vector3(0.5, 0.5, 0.5).normalize();
+  /** Where the sun is drawn in the sky (the light itself is kept a little higher, see apply). */
+  readonly skySun = new THREE.Vector3(0.5, 0.5, 0.5).normalize();
   conditions: Conditions = { time: "morning", weather: "dry" };
   params: Preset = preset(this.conditions);
   private pmrem: THREE.PMREMGenerator;
@@ -260,12 +269,13 @@ export class Environment {
     this.scene.backgroundIntensity = 1;
 
     this.sunDir.copy(info.sunDir).applyAxisAngle(new THREE.Vector3(0, 1, 0), rot).normalize();
+    this.skySun.copy(this.sunDir);
     // Keep a little elevation so shadows stay readable.
     if (this.sunDir.y < 0.12) {
       this.sunDir.y = 0.12;
       this.sunDir.normalize();
     }
-    this.sun.color.copy(info.sunColor).lerp(new THREE.Color(0xffffff), 0.25);
+    this.sun.color.copy(info.sunColor).lerp(new THREE.Color(0xffffff), 0.25).multiply(p.sunTint);
     this.sun.intensity = p.sunIntensity;
     this.sun.castShadow = p.shadows;
     this.hemi.intensity = c.weather === "wet" ? 0.25 : 0.12;

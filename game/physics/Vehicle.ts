@@ -1,6 +1,6 @@
 import { Matrix3, Matrix4, Quaternion, Vector3 } from "three";
 import type { Frame, Track } from "../track/Track";
-import { clamp, lerp, sign, valueNoise } from "../util/math";
+import { clamp, lerp, sign, smoothstep, valueNoise } from "../util/math";
 import { CircleCollider, GroundHit, World, WATER_Y } from "../world/World";
 import { CarSpec, torqueAt } from "./carSpecs";
 import { Surface, SurfaceProps, surfaceProps } from "./surfaces";
@@ -165,6 +165,8 @@ export class Vehicle {
   private tcFactor = 1;
   private escThrottle = 1;
   private steerState = 0;
+  /** 0..1: how far a digital steering press has eased in. */
+  private steerRamp = 0;
   private throttleState = 0;
   private brakeState = 0;
   private handbrakeState = 0;
@@ -296,6 +298,7 @@ export class Vehicle {
     this.tcFactor = 1;
     this.escThrottle = 1;
     this.steerState = 0;
+    this.steerRamp = 0;
     this.throttleState = 0;
     this.brakeState = 0;
     this.airTime = 0;
@@ -378,9 +381,18 @@ export class Vehicle {
       const rate = a.steerRate;
       const target = c.steer;
       let r: number;
-      if (Math.abs(target) < 0.01) r = 4.2 * rate;
-      else if (sign(target) !== sign(this.steerState) && Math.abs(this.steerState) > 0.05) r = 6 * rate;
-      else r = 2.4 * rate;
+      if (Math.abs(target) < 0.01) {
+        r = 4.2 * rate;
+        this.steerRamp = 0;
+      } else if (sign(target) !== sign(this.steerState) && Math.abs(this.steerState) > 0.05) {
+        r = 6 * rate;
+        this.steerRamp = 1; // already moving: carry straight on through the centre
+      } else {
+        // Winding on: the turning rate eases in over ~0.1 s, so a tap is a small, rounded correction
+        // rather than a jab, and the wheel turns a little slower at speed.
+        this.steerRamp = Math.min(1, this.steerRamp + dt * 10);
+        r = 2.4 * rate * (1 - 0.3 * smoothstep(8, 40, Math.abs(forwardSpeed))) * (0.25 + 0.75 * this.steerRamp * this.steerRamp);
+      }
       this.steerState = approachRate(this.steerState, target, r, r, dt);
     } else {
       this.steerState += (c.steer - this.steerState) * Math.min(1, dt * 30);

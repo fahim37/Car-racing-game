@@ -1,8 +1,83 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type { Game } from "@/game/Game";
 import { fmtDelta, fmtScore, fmtTime, useTicker } from "./common";
+
+// Round speedometer: a 270° dial opening at the bottom, clockwise from bottom-left (SVG degrees).
+const DIAL_FROM = 135;
+const DIAL_SWEEP = 270;
+const DIAL_R = 84;
+
+function polar(r: number, deg: number) {
+  const a = (deg * Math.PI) / 180;
+  return [100 + r * Math.cos(a), 100 + r * Math.sin(a)] as const;
+}
+
+function arc(r: number, from: number, to: number) {
+  const [x0, y0] = polar(r, from);
+  const [x1, y1] = polar(r, to);
+  return `M ${x0.toFixed(2)} ${y0.toFixed(2)} A ${r} ${r} 0 ${to - from > 180 ? 1 : 0} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`;
+}
+
+/** White at cruising speed, warming to peach towards the top of the dial. */
+function dialColour(frac: number) {
+  const t = Math.min(1, Math.max(0, (frac - 0.35) / 0.5));
+  const mix = (a: number, b: number) => Math.round(a + (b - a) * t);
+  return `rgb(${mix(255, 255)},${mix(255, 172)},${mix(255, 128)})`;
+}
+
+function Speedometer({ speed, mph, gear, rpmFrac, hot }: { speed: number; mph: boolean; gear: string; rpmFrac: number; hot: boolean }) {
+  const max = mph ? 200 : 320;
+  const labelEvery = mph ? 40 : 80;
+  const minor = 20;
+  const scale = useMemo(() => {
+    const ticks: { d: string; major: boolean }[] = [];
+    const labels: { x: number; y: number; v: number }[] = [];
+    for (let v = 0; v <= max; v += minor) {
+      const deg = DIAL_FROM + (v / max) * DIAL_SWEEP;
+      const major = v % labelEvery === 0;
+      const [x0, y0] = polar(DIAL_R - 6, deg);
+      const [x1, y1] = polar(DIAL_R - (major ? 14 : 10), deg);
+      ticks.push({ d: `M ${x0.toFixed(2)} ${y0.toFixed(2)} L ${x1.toFixed(2)} ${y1.toFixed(2)}`, major });
+      if (major) {
+        const [lx, ly] = polar(DIAL_R - 25, deg);
+        labels.push({ x: lx, y: ly, v });
+      }
+    }
+    // Engine speed: a thin arc over the top, clear of the scale labels and the readout.
+    return { ticks, labels, track: arc(DIAL_R, DIAL_FROM, DIAL_FROM + DIAL_SWEEP), rpm: arc(46, 215, 325) };
+  }, [max, labelEvery]);
+  const frac = Math.min(1, Math.max(0, speed / max));
+  return (
+    <div className="dial" role="img" aria-label={`${Math.round(speed)} ${mph ? "miles" : "kilometres"} per hour, gear ${gear}`}>
+      <svg viewBox="0 0 200 200" aria-hidden="true">
+        <circle cx="100" cy="100" r="97" className="dial-face" />
+        <path d={scale.track} className="dial-track" />
+        {frac > 0.001 && <path d={scale.track} pathLength={1} strokeDasharray={`${frac} 1`} className="dial-fill" style={{ stroke: dialColour(frac) }} />}
+        {scale.ticks.map((t, i) => (
+          <path key={i} d={t.d} className={t.major ? "dial-tick major" : "dial-tick"} />
+        ))}
+        {scale.labels.map((l) => (
+          <text key={l.v} x={l.x} y={l.y} className="dial-label" textAnchor="middle" dominantBaseline="central">
+            {l.v}
+          </text>
+        ))}
+        <path d={scale.rpm} className="dial-rpm-track" />
+        <path d={scale.rpm} pathLength={1} strokeDasharray={`${Math.min(1, rpmFrac)} 1`} className={`dial-rpm ${hot ? "hot" : ""}`} />
+        <text x="100" y="109" className="dial-speed" textAnchor="middle" dominantBaseline="central">
+          {Math.round(speed)}
+        </text>
+        <text x="100" y="138" className="dial-unit" textAnchor="middle" dominantBaseline="central">
+          {mph ? "MPH" : "KM/H"}
+        </text>
+        <text x="100" y="166" className="dial-gear" textAnchor="middle" dominantBaseline="central">
+          GEAR {gear}
+        </text>
+      </svg>
+    </div>
+  );
+}
 
 function Minimap({ game }: { game: Game }) {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -76,30 +151,52 @@ export function Hud({ game, touch }: { game: Game; touch: boolean }) {
   const units = s.units === "mph" ? "mph" : "km/h";
   const rpmFrac = Math.min(1, h.rpm / (h.redline * 1.04));
   const timed = h.kind === "timeTrial" || h.kind === "mastery" || h.kind === "sprint" || h.kind === "drift";
+  const laps = h.kind === "timeTrial" || h.kind === "mastery";
   const cd = h.phase === "countdown" ? Math.ceil(h.countdown) : 0;
   return (
     <div className={`hud ${touch ? "touch-mode" : ""}`} aria-live="off">
       {/* Timing */}
       <div className="hud-tl">
         {timed && (
-          <div className="chip timing">
-            <div className="eyebrow" style={{ fontSize: 11 }}>
-              {h.kind === "timeTrial" || h.kind === "mastery" ? `Lap ${h.lap}/${h.laps}` : h.eventName}
-              {!h.lapValid && h.lapStarted && <span className="invalid-tag"> · invalid</span>}
-            </div>
-            {h.kind !== "drift" ? (
-              <>
-                <div className="big">{(h.kind === "timeTrial" || h.kind === "mastery") && !h.lapStarted ? "0:00.000" : fmtTime(h.lapTime)}</div>
-                {(h.kind === "timeTrial" || h.kind === "mastery") && !h.lapStarted && <div className="sub">Timing starts at the line</div>}
-                {h.delta !== null && h.lapStarted && <div className={`delta ${h.delta <= 0 ? "good" : "bad"}`}>{fmtDelta(h.delta)}</div>}
-                <div className="sub">
-                  <span>Best {fmtTime(h.bestLap)}</span>
-                  {h.pbLap !== null && <span>PB {fmtTime(h.pbLap)}</span>}
+          <div className="race-timing">
+            {laps && (
+              <div className="chip lap-count" aria-label={`Lap ${h.lap} of ${h.laps}`}>
+                <div>
+                  <b>{h.lap}</b>
+                  <span>/{h.laps}</span>
                 </div>
-              </>
-            ) : (
-              <div className="big">{fmtTime(h.lapTime)}</div>
+                <small>LAP</small>
+              </div>
             )}
+            <div className="chip timing">
+              {!laps && <div className="eyebrow" style={{ fontSize: 11 }}>{h.eventName}</div>}
+              {h.kind !== "drift" ? (
+                <>
+                  <div className="t-row main">
+                    <span>{laps ? "LAP" : "TIME"}</span>
+                    <b>{laps && !h.lapStarted ? "0:00.000" : fmtTime(h.lapTime)}</b>
+                  </div>
+                  {laps && !h.lapStarted && <div className="sub">Timing starts at the line</div>}
+                  {h.delta !== null && h.lapStarted && <div className={`delta ${h.delta <= 0 ? "good" : "bad"}`}>{fmtDelta(h.delta)}</div>}
+                  <div className="t-row">
+                    <span>BEST</span>
+                    <b>{fmtTime(h.bestLap)}</b>
+                  </div>
+                  {h.pbLap !== null && (
+                    <div className="t-row">
+                      <span>PB</span>
+                      <b>{fmtTime(h.pbLap)}</b>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="t-row main">
+                  <span>TIME</span>
+                  <b>{fmtTime(h.lapTime)}</b>
+                </div>
+              )}
+              {!h.lapValid && h.lapStarted && <div className="invalid-tag">Lap invalid</div>}
+            </div>
           </div>
         )}
         {h.kind === "free" && !game.multiplayer.room && (
@@ -195,29 +292,18 @@ export function Hud({ game, touch }: { game: Game; touch: boolean }) {
 
       {/* Speed */}
       <div className="hud-br">
-        <div className="chip speedo">
-          <div className="speed-row">
-            <div className="gear" aria-label="Gear">
-              {h.gear}
-            </div>
-            <div>
-              <span className="v">{Math.round(h.kmh)}</span>
-              <span className="u">{units}</span>
-            </div>
-          </div>
-          <div className={`rpm ${rpmFrac > 0.92 ? "hot" : ""}`}>
-            <div style={{ width: `${rpmFrac * 100}%` }} />
-          </div>
+        <div className="speed-side">
+          {h.nitro.enabled && <div className={`chip nitro-meter ${h.nitro.active ? "boosting" : ""}`}>
+            <div className="nitro-label"><span>{h.nitro.active ? "BOOST" : "NITRO"}</span><span>{touch ? "Hold Nitro + Gas" : "Hold N + accelerate"}</span></div>
+            <div role="progressbar" aria-label="Nitro charge" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(h.nitro.charge * 100)}><i style={{ width: `${h.nitro.charge * 100}%` }} /></div>
+          </div>}
           <div className="aids">
             <span className={h.assists.abs ? "on" : ""}>ABS</span>
             <span className={h.assists.tc ? "on" : ""}>TC</span>
             <span className={h.assists.esc ? "on" : ""}>ESC</span>
           </div>
-          {h.nitro.enabled && <div className={`nitro-meter ${h.nitro.active ? "boosting" : ""}`}>
-            <div className="nitro-label"><span>{h.nitro.active ? "BOOST" : "NITRO"}</span><span>{touch ? "Hold Nitro + Gas" : "Hold N + accelerate"}</span></div>
-            <div role="progressbar" aria-label="Nitro charge" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(h.nitro.charge * 100)}><i style={{ width: `${h.nitro.charge * 100}%` }} /></div>
-          </div>}
         </div>
+        <Speedometer speed={h.kmh} mph={s.units === "mph"} gear={h.gear} rpmFrac={rpmFrac} hot={rpmFrac > 0.92} />
       </div>
     </div>
   );

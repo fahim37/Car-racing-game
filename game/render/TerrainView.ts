@@ -84,9 +84,13 @@ vec4 w0 = max(vSplat, 0.0);
 vec3 terr = vec3(0.0);
 vec4 w = vec4(0.0);
 if (w0.x > 0.02) {
-  vec3 c = antiTile(tGrass, wuv / 3.8) * vec3(0.68, 0.94, 0.49);
-  float meadow = texture2D(tGrass, wuv / 55.0).r;
-  c *= mix(vec3(0.82, 1.02, 0.78), vec3(1.12, 1.02, 0.88), smoothstep(0.2, 0.65, meadow));
+  // Sunlit summer grass: yellow-green, with drier golden patches across the hills.
+  vec3 c = antiTile(tGrass, wuv / 3.8) * vec3(0.84, 0.95, 0.42);
+  // Low mip levels: soft blotches rather than magnified leaves and blades.
+  float meadow = textureLod(tGrass, wuv / 55.0, 4.0).r;
+  float dry = textureLod(tForest, wuv / 230.0 + vec2(0.31, 0.17), 6.0).r;
+  c *= mix(vec3(0.86, 1.02, 0.8), vec3(1.12, 1.03, 0.8), smoothstep(0.2, 0.65, meadow));
+  c *= mix(vec3(1.0), vec3(1.2, 1.04, 0.7), smoothstep(0.35, 0.7, dry) * 0.75);
   w.x = pow(w0.x * (dot(c, vec3(0.33)) * 0.6 + 0.4), 2.0);
   terr += c * w.x;
 }
@@ -109,7 +113,7 @@ float wsum = max(w.x + w.y + w.z + w.w, 1e-4);
 terr /= wsum;
 w /= wsum;
 // Large-scale variation so meadows are not uniform.
-float macro = texture2D(tForest, wuv / 170.0).g;
+float macro = textureLod(tForest, wuv / 170.0, 5.0).g;
 terr *= mix(0.82, 1.14, macro);
 terr *= mix(1.0, 0.62, uWet);
 diffuseColor.rgb *= terr;`,
@@ -288,8 +292,13 @@ export class TerrainView {
         const z = z0 + j * spacing;
         const inside = x > inner.x0 + 8 && x < inner.x1 - 8 && z > inner.z0 + 8 && z < inner.z1 - 8;
         let h: number;
-        if (inside) h = w.terrainHeight(x, z) - 4;
-        else {
+        if (inside) {
+          // Hidden under the detailed terrain. The lowest ground around the vertex keeps the coarse
+          // triangles below it even across hollows between the hills.
+          let low = Infinity;
+          for (let a = -2; a <= 2; a++) for (let b = -2; b <= 2; b++) low = Math.min(low, w.terrainHeight(x + a * spacing * 0.5, z + b * spacing * 0.5));
+          h = low - 4;
+        } else {
           h = w.farHeight(x, z);
           // Tuck the ring slightly under the detailed terrain near the seam.
           const dx = Math.max(inner.x0 - x, 0, x - inner.x1);
@@ -300,10 +309,11 @@ export class TerrainView {
         pos.set([x, h, z], (j * n + i) * 3);
       }
     }
-    const green = new THREE.Color(0x2c4a22);
-    const meadow = new THREE.Color(0x5d7a33);
-    const rock = new THREE.Color(0x6d6a62);
-    const snow = new THREE.Color(0xe8edf2);
+    // Grassy hills fading from golden meadow to olive, with bare rock only on the steepest faces.
+    const olive = new THREE.Color(0x56642a);
+    const meadow = new THREE.Color(0x818c35);
+    const golden = new THREE.Color(0x9c9640);
+    const rock = new THREE.Color(0x857a66);
     const sand = new THREE.Color(0x9d8f6a);
     const c = new THREE.Color();
     for (let j = 0; j < n; j++) {
@@ -315,10 +325,10 @@ export class TerrainView {
         const slope = Math.hypot(hx, hz) / (2 * spacing);
         const x = x0 + i * spacing;
         const z = z0 + j * spacing;
-        const forest = smoothstep(0.35, 0.55, fbm(x / 500, z / 500, 3, 44));
-        c.copy(meadow).lerp(green, clamp(forest + smoothstep(20, 120, h) * 0.6, 0, 1));
-        c.lerp(rock, smoothstep(0.55, 0.95, slope) * 0.9 + smoothstep(260, 420, h) * 0.5);
-        c.lerp(snow, smoothstep(430, 520, h + fbm(x / 300, z / 300, 2, 3) * 60) * (1 - smoothstep(0.9, 1.4, slope)));
+        const patches = fbm(x / 500, z / 500, 3, 44);
+        c.copy(meadow).lerp(golden, smoothstep(0.45, 0.7, patches));
+        c.lerp(olive, clamp(smoothstep(0.4, 0.2, patches) * 0.7 + smoothstep(60, 260, h) * 0.3, 0, 1));
+        c.lerp(rock, smoothstep(0.6, 1.0, slope) * 0.8);
         if (h < WATER_Y + 1.5) c.lerp(sand, 0.7);
         col.set([c.r, c.g, c.b], k * 3);
       }

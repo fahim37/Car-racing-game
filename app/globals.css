@@ -607,11 +607,6 @@ button {
   padding: 10px 14px;
   min-width: 190px;
 }
-.timing .big {
-  font-family: var(--mono);
-  font-size: 28px;
-  letter-spacing: 0.02em;
-}
 .timing .sub {
   font-size: 12.5px;
   color: var(--muted);
@@ -639,56 +634,163 @@ button {
   align-items: flex-end;
   gap: 12px;
 }
-.speedo {
-  padding: 10px 16px 12px;
-  min-width: 190px;
-  text-align: right;
+/* Round speedometer (racing-game style): SVG dial, scales with its box. */
+.dial {
+  width: 200px;
+  height: 200px;
+  border-radius: 50%;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  filter: drop-shadow(0 6px 16px rgba(0, 0, 0, 0.35));
 }
-.speedo .v {
-  font-size: 46px;
-  font-weight: 300;
-  line-height: 1;
-  font-family: var(--mono);
-}
-.speedo .u {
-  font-size: 12px;
-  color: var(--muted);
-  margin-left: 6px;
-}
-.speed-row {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 14px;
-}
-.speedo .gear {
-  font-size: 26px;
-  font-weight: 500;
-  font-family: var(--mono);
-  min-width: 26px;
-  padding-bottom: 4px;
-  color: var(--accent);
-}
-.rpm {
-  height: 4px;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.1);
-  margin-top: 8px;
-  overflow: hidden;
-}
-.rpm > div {
+.dial svg {
+  display: block;
+  width: 100%;
   height: 100%;
-  background: var(--accent);
-  border-radius: 4px;
+  overflow: visible;
 }
-.rpm.hot > div {
-  background: var(--warm);
+.dial-face {
+  fill: rgba(12, 16, 22, 0.55);
+  stroke: rgba(255, 255, 255, 0.1);
+  stroke-width: 1;
+}
+.dial-track,
+.dial-fill,
+.dial-rpm-track,
+.dial-rpm {
+  fill: none;
+  stroke-linecap: round;
+}
+.dial-track {
+  stroke: rgba(255, 255, 255, 0.14);
+  stroke-width: 7;
+}
+.dial-fill {
+  stroke-width: 7;
+  filter: drop-shadow(0 0 4px rgba(255, 190, 150, 0.55));
+}
+.dial-tick {
+  stroke: rgba(255, 255, 255, 0.35);
+  stroke-width: 1.5;
+}
+.dial-tick.major {
+  stroke: rgba(255, 255, 255, 0.85);
+  stroke-width: 2.2;
+}
+.dial-label {
+  fill: rgba(255, 255, 255, 0.8);
+  font-family: var(--font);
+  font-size: 11px;
+  font-style: italic;
+  font-weight: 600;
+}
+.dial-rpm-track {
+  stroke: rgba(255, 255, 255, 0.08);
+  stroke-width: 3;
+}
+.dial-rpm {
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+.dial-rpm.hot {
+  stroke: #ff7a5c;
+}
+.dial-speed {
+  fill: #fff;
+  font-family: var(--font);
+  font-size: 44px;
+  font-style: italic;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.dial-unit {
+  fill: rgba(255, 255, 255, 0.88);
+  font-family: var(--font);
+  font-size: 12px;
+  font-style: italic;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.dial-gear {
+  fill: #fff;
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+.speed-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  padding-bottom: 12px;
+}
+.speed-side .nitro-meter {
+  width: 172px;
+  padding: 8px 10px 9px;
+  margin-top: 0;
+}
+/* Lap counter and timing, in the same italic racing type as the dial. */
+.race-timing {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+.lap-count {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 14px;
+  font-style: italic;
+}
+.lap-count b {
+  font-size: 40px;
+  font-weight: 800;
+  line-height: 1;
+}
+.lap-count span {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--muted);
+  margin-left: 2px;
+}
+.lap-count small {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.hud .chip.timing {
+  border-right: 3px solid var(--accent);
+}
+.t-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 18px;
+  font-style: italic;
+}
+.t-row span {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+}
+.t-row b {
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.t-row.main b {
+  font-size: 26px;
+  font-weight: 800;
 }
 .aids {
   display: flex;
   gap: 6px;
   justify-content: flex-end;
-  margin-top: 6px;
   font-size: 10.5px;
   letter-spacing: 0.08em;
   font-weight: 600;
@@ -696,7 +798,8 @@ button {
 .aids span {
   padding: 2px 6px;
   border-radius: 5px;
-  color: var(--faint);
+  color: var(--muted);
+  background: var(--panel-soft);
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 .aids span.on {
@@ -1213,18 +1316,19 @@ button {
 
 /* Compact HUD on small screens */
 @media (max-width: 760px), (max-height: 480px) {
-  .timing .big {
-    font-size: 22px;
-  }
   .timing {
     min-width: 150px;
     padding: 8px 10px;
   }
-  .speedo .v {
-    font-size: 34px;
+  .dial {
+    width: 150px;
+    height: 150px;
   }
-  .speedo {
-    min-width: 150px;
+  .t-row.main b {
+    font-size: 21px;
+  }
+  .lap-count b {
+    font-size: 30px;
   }
   .minimap {
     width: 104px;
@@ -1296,14 +1400,24 @@ button {
   right: auto;
   left: 50%;
   transform: translateX(-50%);
-  bottom: calc(10px + var(--safe-b));
+  bottom: calc(4px + var(--safe-b));
 }
-.hud.touch-mode .speedo {
-  min-width: 150px;
-  padding: 6px 12px 8px;
+/* Phones: small enough to sit below the car rather than over it. */
+.hud.touch-mode .dial {
+  width: 100px;
+  height: 100px;
 }
-.hud.touch-mode .speedo .v {
-  font-size: 30px;
+.hud.touch-mode .dial-label {
+  display: none;
+}
+.hud.touch-mode .speed-side {
+  padding-bottom: 6px;
+}
+.hud.touch-mode .speed-side .aids {
+  display: none;
+}
+.hud.touch-mode .speed-side .nitro-meter {
+  width: 132px;
 }
 .touch .top-btns {
   left: auto;

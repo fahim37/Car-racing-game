@@ -18,9 +18,9 @@ function grassTexture() {
     const w = 4 + r() * 7;
     const shade = 0.82 + r() * 0.36;
     const grad = g.createLinearGradient(0, H, 0, H - h);
-    grad.addColorStop(0, `rgb(${Math.round(38 * shade)},${Math.round(62 * shade)},${Math.round(25 * shade)})`);
-    grad.addColorStop(0.55, `rgb(${Math.round(87 * shade)},${Math.round(128 * shade)},${Math.round(47 * shade)})`);
-    grad.addColorStop(1, `rgb(${Math.round(153 * shade)},${Math.round(172 * shade)},${Math.round(88 * shade)})`);
+    grad.addColorStop(0, `rgb(${Math.round(62 * shade)},${Math.round(76 * shade)},${Math.round(26 * shade)})`);
+    grad.addColorStop(0.55, `rgb(${Math.round(120 * shade)},${Math.round(136 * shade)},${Math.round(46 * shade)})`);
+    grad.addColorStop(1, `rgb(${Math.round(182 * shade)},${Math.round(180 * shade)},${Math.round(86 * shade)})`);
     g.fillStyle = grad;
     g.beginPath();
     g.moveTo(x - w / 2, H);
@@ -150,7 +150,7 @@ float gSway = (sin(uTime * 1.6 + gBase.x * 0.35 + gBase.y * 0.21) * 0.6 + sin(uT
 transformed.x += gSway;
 transformed.z += gSway * 0.6;
 transformed += vec3(gBase.x, gH - 0.04, gBase.y);
-vGrassTint = mix(vec3(0.82, 0.97, 0.76), vec3(1.1, 1.04, 0.87), gPatch) * (0.88 + aOffset.z * 0.2);`,
+vGrassTint = mix(vec3(0.96, 1.0, 0.68), vec3(1.22, 1.08, 0.7), gPatch) * (0.88 + aOffset.z * 0.2);`,
         );
       shader.fragmentShader = shader.fragmentShader
         .replace("#include <common>", "#include <common>\nvarying vec3 vGrassTint;")

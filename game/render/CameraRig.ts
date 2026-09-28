@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { Vehicle } from "../physics/Vehicle";
-import { dampFactor, valueNoise, wrapAngle } from "../util/math";
+import { clamp, dampFactor, smoothstep, valueNoise, wrapAngle } from "../util/math";
 import { World } from "../world/World";
 import { CarView } from "./CarView";
 
@@ -24,6 +24,8 @@ export class CameraRig {
   settings: CameraSettings = { fov: 62, speedFov: 4, shake: 0.35 };
   private heading = 0;
   private pitchSmooth = 0;
+  private focusY = 0;
+  private pullBack = 0;
   private pos = new THREE.Vector3();
   private look = new THREE.Vector3();
   private initialised = false;
@@ -86,29 +88,39 @@ export class CameraRig {
 
     if (this.mode === "chase" || this.mode === "chaseFar") {
       const far = this.mode === "chaseFar";
-      const dist = (far ? 7.8 : 5.6) + Math.min(speed, 60) * 0.012;
-      const height = far ? 2.5 : 1.75;
+      // Hills: follow the grade of the road (the direction of travel), not the body pitching under
+      // braking and power, so the horizon stays calm.
+      const pitch = speed > 3 ? Math.asin(clamp(v.vel.y / speed, -0.5, 0.5)) : Math.asin(clamp(fwd.y, -0.5, 0.5));
       // Follow a blend of where the car points and where it travels (shows slides nicely).
-      const blend = speed > 4 ? 0.35 : 0;
+      const blend = 0.35 * smoothstep(2, 8, speed);
       let targetHeading = carHeading + wrapAngle(velHeading - carHeading) * blend;
       if (this.lookBack) targetHeading += Math.PI;
       if (!this.initialised) {
         this.heading = targetHeading;
+        this.pitchSmooth = pitch;
+        this.focusY = pose.pos.y;
+        this.pullBack = 0;
         this.initialised = true;
       }
       this.heading += wrapAngle(targetHeading - this.heading) * dampFactor(this.lookBack ? 30 : 5.5, dt);
+      this.pitchSmooth += (pitch - this.pitchSmooth) * dampFactor(3, dt);
+      // Ride height is filtered, so suspension bounce and kerb strikes move the car rather than the
+      // whole view; the climb rate is fed forward so the camera does not sag behind on hills.
+      const climb = speed * Math.sin(this.pitchSmooth);
+      this.focusY += (pose.pos.y + climb / 9 - this.focusY) * dampFactor(9, dt);
+      // The camera eases back a little under power and closes in under braking: a sense of weight.
+      this.pullBack += (clamp(v.telemetry.longG, -1, 1) * 0.45 - this.pullBack) * dampFactor(2.5, dt);
+      const dist = (far ? 7.8 : 5.6) + Math.min(speed, 60) * 0.012 + this.pullBack;
+      const height = far ? 2.5 : 1.75;
       const hx = Math.sin(this.heading);
       const hz = Math.cos(this.heading);
-      // Follow terrain pitch gently so hills read correctly.
-      const pitch = Math.asin(Math.max(-0.5, Math.min(0.5, fwd.y)));
-      this.pitchSmooth += (pitch - this.pitchSmooth) * dampFactor(3, dt);
       const px = pose.pos.x - hx * dist;
       const pz = pose.pos.z - hz * dist;
-      let py = pose.pos.y + height - Math.sin(this.pitchSmooth) * dist * 0.7;
+      let py = this.focusY + height - Math.sin(this.pitchSmooth) * dist * 0.7;
       const ground = this.world.terrainHeight(px, pz);
       py = Math.max(py, ground + 0.6);
       this.pos.set(px, py, pz);
-      this.look.set(pose.pos.x + hx * 3.2, pose.pos.y + 0.75 + Math.sin(this.pitchSmooth) * 3, pose.pos.z + hz * 3.2);
+      this.look.set(pose.pos.x + hx * 3.2, this.focusY + 0.75 + Math.sin(this.pitchSmooth) * 3, pose.pos.z + hz * 3.2);
       cam.position.copy(this.pos);
       cam.position.x += sx;
       cam.position.y += sy;

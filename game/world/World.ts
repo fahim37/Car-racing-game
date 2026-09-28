@@ -27,7 +27,7 @@ export interface Pad {
   d1: number;
 }
 
-export type Species = "pine_a" | "pine_b" | "pine_c" | "pine_d" | "birch" | "bush" | "bushes" | "rocks" | "rock_big" | "rocks_small";
+export type Species = "pine_a" | "pine_b" | "pine_c" | "pine_d" | "birch" | "palm" | "bush" | "bushes" | "rocks" | "rock_big" | "rocks_small";
 
 export interface Plant {
   species: Species;
@@ -172,14 +172,28 @@ export class World {
     return smoothstep(shore - 6, shore + 55, -p.d);
   }
 
-  /** The untouched landscape: hills that follow the road's general elevation, lake and mountains. */
+  /** 1 on the lake side of the lakeshore sections (fading in and out at their ends), else 0. */
+  private lakeSide(p: Projection) {
+    const L = this.track.length;
+    if (p.d > 0 || !this.track.inRange(p.s, { s0: this.lakeS0, s1: this.lakeS1 + (this.lakeS1 < this.lakeS0 ? L : 0) })) return 0;
+    return smoothstep(0, 180, Math.min(this.track.delta(this.lakeS0, p.s), this.track.delta(p.s, this.lakeS1)));
+  }
+
+  /**
+   * The untouched landscape. Smooth, rounded grassy hills rise from the verges so the road winds
+   * along the valleys between them; the lake shore stays open, and larger hills ring the valley.
+   */
   natural(x: number, z: number, p: Projection, f: Frame) {
     const base = this.idwBase(x, z);
     const dist = Math.max(0, Math.abs(p.d) - f.halfWidth);
-    const amp = 2 + 20 * smoothstep(25, 320, dist);
-    let h = base + (fbm(x / 280, z / 280, 4, 3) - 0.45) * 2 * amp + (fbm(x / 60, z / 60, 3, 9) - 0.5) * 2.2;
+    let h = base + (fbm(x / 60, z / 60, 3, 9) - 0.5) * 2.2;
+    // Rolling hills: rounded crests and saddles, some stretches more open than others.
+    const crest = smoothstep(0.28, 0.74, fbm(x / 250, z / 250, 3, 3));
+    const open = lerp(0.45, 1, smoothstep(0.3, 0.62, fbm(x / 800, z / 800, 2, 13)));
+    const rise = smoothstep(12, 120, dist) * (1 - this.lakeSide(p));
+    h += rise * open * (7 + 40 * crest);
     const m = this.mountainFactor(x, z);
-    if (m > 0) h += m * (ridged(x / 1100, z / 1100, 5, 7) * 520 + fbm(x / 400, z / 400, 3, 8) * 140);
+    if (m > 0) h += m * (fbm(x / 1000, z / 1000, 4, 7) * 250 + ridged(x / 1500, z / 1500, 3, 7) * 110);
     const lake = this.lakeFactor(p, f) * (1 - smoothstep(0.2, 0.6, m));
     if (lake > 0) h = lerp(h, WATER_Y - 9 - 5 * valueNoise(x / 90, z / 90, 4), lake);
     // Small island in the bay.
@@ -200,14 +214,15 @@ export class World {
     const runoff = this.track.runoffWidth(p.s, p.d);
     const rail = this.track.railAt(p.s, side as 1 | -1);
     const flat = runoff + (rail ? rail.offset + 1.5 : 0);
-    const blend = 16 + flat;
+    // Wide enough that hills roll down to the verge instead of ending in steep cuttings.
+    const blend = 30 + flat;
     const verge = edgeY - 0.06 - Math.min(dist, flat) * 0.012;
     h = lerp(verge, h, smoothstep(flat, blend, dist));
-    // Practice pad, flattened into the landscape.
+    // Practice pad, flattened into the landscape (with room for the hills to roll down to it).
     const padD = this.padDistance(p);
-    if (padD < 30) {
+    if (padD < 60) {
       const py = this.padHeight(p) - 0.12;
-      h = lerp(py, h, smoothstep(0, 30, padD));
+      h = lerp(py, h, smoothstep(0, 60, padD));
     }
     return h;
   }
@@ -226,10 +241,10 @@ export class World {
     return this.track.roadHeight(s, this.pad.d0) - (Math.max(p.d, this.pad.d0) - this.pad.d0) * 0.006;
   }
 
-  /** 0..1 forest cover. Higher ground is more wooded; the lake shore is meadow. */
+  /** 0..1 tree cover: small scattered groves; most of the land is open grass. */
   forestDensity(x: number, z: number, h: number) {
-    const n = fbm(x / 170, z / 170, 4, this.forestSeed) + smoothstep(9, 28, h) * 0.16 - (1 - smoothstep(2, 6, h)) * 0.12;
-    return smoothstep(0.4, 0.6, n);
+    const n = fbm(x / 150, z / 150, 3, this.forestSeed) - (1 - smoothstep(2, 6, h)) * 0.12;
+    return smoothstep(0.6, 0.78, n);
   }
 
   private classify() {
@@ -249,8 +264,9 @@ export class World {
         const f = this.track.frameAt(p.s, scratchFrame);
         const dist = Math.abs(p.d) - f.halfWidth - SHOULDER_WIDTH;
         let sand = 1 - smoothstep(WATER_Y + 0.35, WATER_Y + 1.3, h);
-        let rock = smoothstep(0.55, 0.9, slope);
-        const forest = this.forestDensity(x, z, h) * smoothstep(3, 14, dist) * (1 - sand);
+        let rock = smoothstep(0.95, 1.35, slope);
+        // Groves stand in the grass: only a light scatter of leaf litter beneath them.
+        const forest = this.forestDensity(x, z, h) * 0.3 * smoothstep(3, 14, dist) * (1 - sand);
         const padD = this.padDistance(p);
         if (padD < 4) sand = rock = 0;
         const mountain = this.mountainFactor(x, z);
@@ -421,7 +437,7 @@ export class World {
         const rail = track.railAt(p.s, side);
         const corner = track.cornerAt(p.s, 40);
         // Keep sight lines and run-off clear: more room on the outside of corners.
-        let clearance = 5 + track.runoffWidth(p.s, p.d) + (rail ? rail.offset + 3 : 0);
+        let clearance = 6 + track.runoffWidth(p.s, p.d) + (rail ? rail.offset + 3 : 0);
         if (corner && side === -corner.dir) clearance += 6;
         if (dist < clearance) continue;
         if (this.padDistance(p) < 14) continue;
@@ -436,26 +452,20 @@ export class World {
         const mountain = this.mountainFactor(px, pz);
         const nearLake = 1 - smoothstep(WATER_Y + 1.5, WATER_Y + 5, y);
         const r = rand();
-        // Trees: dense in forests, scattered in meadows.
-        let treeChance = lerp(0.035, 0.62, forest) * (1 - nearLake * 0.7) * (1 - smoothstep(0.7, 1.1, slope));
-        treeChance *= smoothstep(0, 12, dist - clearance + 4);
+        // Trees: a few small groves and lone palms dotted over the hills, never a wall of forest.
+        let treeChance = (0.008 + 0.18 * forest) * (1 - nearLake * 0.4) * (1 - smoothstep(0.6, 0.95, slope));
+        treeChance *= smoothstep(4, 14, dist - clearance);
         treeChance *= 1 - smoothstep(0.5, 0.95, mountain);
         if (r < treeChance) {
-          const pick = rand();
-          let species: Species;
-          if (forest < 0.35 && pick < 0.45) species = "birch";
-          else if (pick < 0.12) species = "birch";
-          else if (pick < 0.4) species = "pine_d";
-          else if (pick < 0.62) species = "pine_c";
-          else if (pick < 0.82) species = "pine_b";
-          else species = "pine_a";
-          const scale = species === "birch" ? 3.6 + rand() * 1.6 : 1.15 + rand() * 0.75;
-          plants.push({ species, variant: 0, x: px, y, z: pz, scale, rot: rand() * Math.PI * 2, tint: rand() });
+          const species: Species = rand() < 0.74 - forest * 0.24 ? "palm" : "birch";
+          const variant = species === "palm" ? Math.floor(rand() * 2) : 0;
+          const scale = species === "birch" ? 3.4 + rand() * 1.4 : 0.85 + rand() * 0.4;
+          plants.push({ species, variant, x: px, y, z: pz, scale, rot: rand() * Math.PI * 2, tint: rand() });
           continue;
         }
         const r2 = rand();
-        if (r2 < 0.05 + forest * 0.05 && dist > 2.5) {
-          const species: Species = rand() < 0.55 ? "bush" : "bushes";
+        if (r2 < 0.01 + forest * 0.05 && dist > 2.5) {
+          const species: Species = forest < 0.3 || rand() < 0.6 ? "bush" : "bushes";
           plants.push({
             species,
             variant: species === "bushes" ? Math.floor(rand() * 3) : 0,
@@ -466,7 +476,7 @@ export class World {
             rot: rand() * Math.PI * 2,
             tint: rand(),
           });
-        } else if (r2 < 0.075 + smoothstep(0.35, 0.8, slope) * 0.3 + nearLake * 0.04) {
+        } else if (r2 < 0.006 + smoothstep(0.45, 0.9, slope) * 0.08 + nearLake * 0.02) {
           const pick = rand();
           const species: Species = pick < 0.45 ? "rocks" : pick < 0.75 ? "rock_big" : "rocks_small";
           const scale = species === "rocks" ? 0.8 + rand() * 1.4 : species === "rock_big" ? 2 + rand() * 4 : 3 + rand() * 5;
@@ -485,8 +495,9 @@ export class World {
     }
     this.plants = plants;
     for (const pl of plants) {
-      if (pl.species.startsWith("pine") || pl.species === "birch") {
-        this.addCollider({ x: pl.x, z: pl.z, r: pl.species === "birch" ? 0.25 * (pl.scale / 4) : 0.28 * pl.scale, kind: "tree" });
+      if (pl.species.startsWith("pine") || pl.species === "birch" || pl.species === "palm") {
+        const r = pl.species === "birch" ? 0.25 * (pl.scale / 4) : pl.species === "palm" ? 0.3 * pl.scale : 0.28 * pl.scale;
+        this.addCollider({ x: pl.x, z: pl.z, r, kind: "tree" });
       } else if (pl.species === "rocks" || pl.species === "rock_big") {
         this.addCollider({ x: pl.x, z: pl.z, r: pl.species === "rock_big" ? 0.3 * pl.scale : 0.45 * pl.scale, kind: "rock" });
       }

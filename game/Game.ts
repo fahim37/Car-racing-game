@@ -86,6 +86,10 @@ export interface Hud {
 }
 
 const tmpV = new THREE.Vector3();
+const tmpSun = new THREE.Vector3();
+
+/** Menus, free drive and multiplayer: warm, low golden-hour sun. */
+const DEFAULT_CONDITIONS: Conditions = { time: "afternoon", weather: "dry" };
 
 export class Game {
   readonly multiplayer = new Multiplayer((room) => this.startNetworkRace(room));
@@ -119,7 +123,7 @@ export class Game {
   private line: RacingLine | null = null;
   private lineKey = "";
   private lineCache = new Map<string, RacingLine>();
-  private conditions: Conditions = { time: "morning", weather: "dry" };
+  private conditions: Conditions = { ...DEFAULT_CONDITIONS };
   private player: DriverControls = { throttle: 0, brake: 0, steer: 0, handbrake: 0, shiftUp: false, shiftDown: false, digitalSteer: true, digitalPedals: true };
   private acc = 0;
   private prevPose: CarPose | null = null;
@@ -159,7 +163,7 @@ export class Game {
       helpOpen: false,
       eventId: "tt-morning",
       carId: this.profile.settings.lastCar,
-      freeConditions: { time: "morning", weather: "dry" },
+      freeConditions: { ...DEFAULT_CONDITIONS },
       results: null,
       showResults: false,
       profileRev: 0,
@@ -360,7 +364,7 @@ export class Game {
       this.opponents = null;
       this.session = null;
       this.parkForMenu();
-      void this.ensureConditions({ time: "morning", weather: "dry" });
+      void this.ensureConditions({ ...DEFAULT_CONDITIONS });
     }
     this.store.set({ screen, paused: false, showResults: false });
   }
@@ -486,7 +490,7 @@ export class Game {
   async joinMultiplayer(name: string, code?: string) {
     await this.multiplayer.join(name, this.store.get().carId, code);
     try {
-      this.store.set({ freeConditions: { time: "morning", weather: "dry" } });
+      this.store.set({ freeConditions: { ...DEFAULT_CONDITIONS } });
       await this.startEvent("free");
       const room = this.multiplayer.room;
       if (!room || !this.session) throw new Error("Connection closed while loading. Please rejoin.");
@@ -815,12 +819,26 @@ export class Game {
     if (v) v.impacts.length = 0;
 
     this.updateHud(driving);
+    this.updateSunGlare(cam);
     this.profStep("world");
     this.renderer.trackFrame(dt);
     this.renderer.render(this.scene, cam, driving && v ? v.telemetry.speed : 0);
     this.profStep("render");
     this.prof.frame = this.prof.frame * 0.95 + (performance.now() - frameStart) * 0.05;
   };
+
+  /** Tells the final pass where the sun is on screen; it fades out as the sun leaves the frame. */
+  private updateSunGlare(cam: THREE.PerspectiveCamera) {
+    const sun = this.env.skySun;
+    cam.getWorldDirection(tmpSun);
+    if (tmpSun.dot(sun) <= 0.05) {
+      this.renderer.setSun(0.5, 0.5, 0, this.env.sun.color);
+      return;
+    }
+    tmpSun.copy(sun).multiplyScalar(1000).add(cam.position).project(cam);
+    const edge = Math.max(Math.abs(tmpSun.x), Math.abs(tmpSun.y));
+    this.renderer.setSun(tmpSun.x * 0.5 + 0.5, tmpSun.y * 0.5 + 0.5, 1 - smoothstep(0.92, 1.15, edge), this.env.sun.color);
+  }
 
   private sampleEnvironment(p: THREE.Vector3, dt: number) {
     this.envSample.t -= dt;

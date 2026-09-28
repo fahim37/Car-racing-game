@@ -18,6 +18,8 @@ export interface FoliageModel {
   parts: FoliagePart[];
   height: number;
   radius: number;
+  /** Wind strength shared by every part (keeps fronds attached to a swaying trunk). */
+  wind?: number;
 }
 
 type Rect = [number, number, number, number]; // x, y, w, h in the 1024 atlas
@@ -187,6 +189,87 @@ function composeBirchBark(seed: number) {
   return t;
 }
 
+/** A palm frond seen from above: a tapering midrib with long, slightly curved leaflets on both sides. */
+function composeFrond(seed: number) {
+  const W = 1024;
+  const H = 256;
+  const c = document.createElement("canvas");
+  c.width = W;
+  c.height = H;
+  const g = c.getContext("2d")!;
+  const r = rng(seed);
+  const y0 = H / 2;
+  const x0 = 6;
+  const x1 = W - 6;
+  // Leaflets nearly touch, so the frond still reads as a full leaf in the small mip levels.
+  const n = 96;
+  for (let i = 0; i < n; i++) {
+    const t = 0.03 + (i / n) * 0.95;
+    const x = x0 + (x1 - x0) * t;
+    // Leaflets are longest a third of the way along and short at the base and tip.
+    const reach = (H / 2 - 6) * Math.pow(Math.sin(Math.PI * Math.min(1, 0.08 + t * 1.05)), 0.6) * (0.85 + r() * 0.15);
+    for (const side of [-1, 1]) {
+      const ang = 0.55 + r() * 0.25; // from the midrib, towards the tip
+      const tipX = x + reach / Math.tan(ang);
+      const tipY = y0 + side * reach;
+      const w = 8 + 8 * (1 - t) + r() * 3;
+      const sh = 0.8 + r() * 0.35;
+      const grad = g.createLinearGradient(x, y0, tipX, tipY);
+      grad.addColorStop(0, `rgb(${Math.round(52 * sh)},${Math.round(80 * sh)},${Math.round(26 * sh)})`);
+      grad.addColorStop(0.6, `rgb(${Math.round(98 * sh)},${Math.round(128 * sh)},${Math.round(42 * sh)})`);
+      grad.addColorStop(1, r() < 0.2 ? `rgb(${Math.round(160 * sh)},${Math.round(150 * sh)},${Math.round(70 * sh)})` : `rgb(${Math.round(128 * sh)},${Math.round(150 * sh)},${Math.round(58 * sh)})`);
+      g.fillStyle = grad;
+      const mx = (x + tipX) / 2;
+      const my = (y0 + tipY) / 2 + side * 6;
+      g.beginPath();
+      g.moveTo(x - w / 2, y0);
+      g.quadraticCurveTo(mx - w * 0.3, my - side * w * 0.5, tipX, tipY);
+      g.quadraticCurveTo(mx + w * 0.4, my + side * w * 0.3, x + w / 2, y0);
+      g.closePath();
+      g.fill();
+    }
+  }
+  // Midrib
+  g.lineCap = "round";
+  for (let i = 0; i < 16; i++) {
+    const t0 = i / 16;
+    const t1 = (i + 1) / 16;
+    g.strokeStyle = "#7d7a3c";
+    g.lineWidth = 8 * (1 - t0) + 1.5;
+    g.beginPath();
+    g.moveTo(x0 + (x1 - x0) * t0, y0);
+    g.lineTo(x0 + (x1 - x0) * t1, y0);
+    g.stroke();
+  }
+  return canvasTexture(c);
+}
+
+/** Grey-brown palm trunk with the ring scars of old fronds. */
+function composePalmBark(seed: number) {
+  const c = document.createElement("canvas");
+  c.width = 128;
+  c.height = 256;
+  const g = c.getContext("2d")!;
+  const r = rng(seed);
+  g.fillStyle = "#8f806b";
+  g.fillRect(0, 0, 128, 256);
+  for (let i = 0; i < 600; i++) {
+    const v = 110 + r() * 60;
+    g.fillStyle = `rgba(${v},${v - 10},${v - 24},0.35)`;
+    g.fillRect(r() * 128, r() * 256, 1 + r() * 2, 3 + r() * 8);
+  }
+  for (let y = 0; y < 256; y += 16) {
+    const wob = (r() - 0.5) * 3;
+    g.fillStyle = "rgba(48,38,28,0.55)";
+    g.fillRect(0, y + wob, 128, 3);
+    g.fillStyle = "rgba(190,176,150,0.35)";
+    g.fillRect(0, y + wob + 3, 128, 2);
+  }
+  const t = canvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+
 /** Collects vertices for a card-based mesh. */
 class Builder {
   pos: number[] = [];
@@ -328,8 +411,8 @@ function buildBroadleaf(seed: number, height: number) {
   const centre = new THREE.Vector3((r() - 0.5) * 0.08 * height, height * 0.66, (r() - 0.5) * 0.08 * height);
   const rx = height * (0.2 + r() * 0.06);
   const ry = height * (0.3 + r() * 0.05);
-  const card = height * 0.26;
-  const clusters = 90;
+  const card = height * 0.23;
+  const clusters = 125;
   for (let i = 0; i < clusters; i++) {
     // Points on/inside an ellipsoid, denser near the surface.
     const u = r() * 2 - 1;
@@ -351,6 +434,88 @@ function buildBroadleaf(seed: number, height: number) {
   }
   const tr = trunk(height * 0.78, height * 0.018, height * 0.006, 6, 6, seed + 3, 1.2);
   return { foliage: b.build(), trunk: tr };
+}
+
+/** Palm: a slender, gently curving ringed trunk under a crown of arching, drooping fronds. */
+function buildPalm(seed: number, height: number, lean: number) {
+  const r = rng(seed);
+  // Trunk along a quadratic curve, swollen at the base.
+  const tb = new Builder();
+  const sides = 8;
+  const rings = 12;
+  const r0 = height * 0.024;
+  const r1 = height * 0.016;
+  const curve = (t: number) => new THREE.Vector3(lean * t * t, t * height, lean * 0.25 * t * t);
+  const ring = (k: number) => {
+    const t = k / rings;
+    const c = curve(t);
+    const rad = (r0 + (r1 - r0) * Math.pow(t, 0.6)) * (1 + 0.4 * Math.exp(-t * 14));
+    const pts: THREE.Vector3[] = [];
+    for (let s = 0; s <= sides; s++) {
+      const a = (s / sides) * Math.PI * 2;
+      pts.push(new THREE.Vector3(c.x + Math.cos(a) * rad, c.y, c.z + Math.sin(a) * rad));
+    }
+    return { pts, y: c.y };
+  };
+  let prev = ring(0);
+  for (let k = 1; k <= rings; k++) {
+    const cur = ring(k);
+    for (let s = 0; s < sides; s++) {
+      const a0 = (s / sides) * Math.PI * 2;
+      const a1 = ((s + 1) / sides) * Math.PI * 2;
+      const n0 = new THREE.Vector3(Math.cos(a0), 0.1, Math.sin(a0)).normalize();
+      const n1 = new THREE.Vector3(Math.cos(a1), 0.1, Math.sin(a1)).normalize();
+      const u0 = s / sides;
+      const u1 = (s + 1) / sides;
+      const ao0 = 0.6 + 0.4 * Math.min(1, prev.y / (height * 0.25));
+      const ao1 = 0.6 + 0.4 * Math.min(1, cur.y / (height * 0.25));
+      tb.quad([prev.pts[s], prev.pts[s + 1], cur.pts[s + 1], cur.pts[s]], [[u0, prev.y / 1.4], [u1, prev.y / 1.4], [u1, cur.y / 1.4], [u0, cur.y / 1.4]], [n0, n1, n1, n0], [ao0, ao0, ao1, ao1]);
+    }
+    prev = cur;
+  }
+
+  // Crown: young fronds reach up, older ones arch out and hang down.
+  const fb = new Builder();
+  const top = curve(1);
+  const centre = top.clone().addScaledVector(UP, -0.6);
+  const fronds = 18;
+  const segs = 4;
+  for (let i = 0; i < fronds; i++) {
+    const young = i < 5;
+    const az = i * 2.39996 + r() * 0.3;
+    const dirH = new THREE.Vector3(Math.cos(az), 0, Math.sin(az));
+    const side = new THREE.Vector3().crossVectors(UP, dirH).normalize();
+    const len = (young ? 3.1 : 4.6) * (0.85 + r() * 0.3) * (height / 9.5);
+    let el = young ? 0.85 + r() * 0.3 : 0.25 + r() * 0.35;
+    const droop = young ? 0.2 : 0.36 + r() * 0.14;
+    const hw = len * 0.22;
+    const fold = 0.38 + r() * 0.15; // leaflets hang down from the midrib
+    const stations: { p: THREE.Vector3; up: THREE.Vector3 }[] = [];
+    const p = top.clone().addScaledVector(dirH, 0.12);
+    for (let k = 0; k <= segs; k++) {
+      const dir = dirH.clone().multiplyScalar(Math.cos(el)).addScaledVector(UP, Math.sin(el));
+      stations.push({ p: p.clone(), up: new THREE.Vector3().crossVectors(dir, side).normalize() });
+      p.addScaledVector(dir, len / segs);
+      el -= droop;
+    }
+    for (let k = 0; k < segs; k++) {
+      const a = stations[k];
+      const b = stations[k + 1];
+      const wa = hw * (k === 0 ? 0.45 : 1);
+      const wb = hw * (k === segs - 1 ? 0.55 : 1);
+      const u0 = k / segs;
+      const u1 = (k + 1) / segs;
+      const ao0 = (young ? 0.85 : 0.72) + 0.28 * u0;
+      const ao1 = (young ? 0.85 : 0.72) + 0.28 * u1;
+      for (const s of [1, -1]) {
+        const edge = (st: { p: THREE.Vector3; up: THREE.Vector3 }, w: number) => st.p.clone().addScaledVector(side, s * w * Math.cos(fold)).addScaledVector(st.up, -w * Math.sin(fold));
+        const q = [a.p.clone(), b.p.clone(), edge(b, wb), edge(a, wa)];
+        const v = s > 0 ? 1 : 0;
+        fb.quad(q, [[u0, 0.5], [u1, 0.5], [u1, v], [u0, v]], q.map((pt, j) => canopyNormal(pt, centre, 0.6).addScaledVector(j === 0 || j === 3 ? a.up : b.up, 0.5).normalize()), [ao0, ao1, ao1, ao0]);
+      }
+    }
+  }
+  return { foliage: fb.build(), trunk: tb.build() };
 }
 
 /** Low shrub of leaf clusters. */
@@ -449,6 +614,17 @@ export async function buildFoliageModels(): Promise<Map<string, FoliageModel>> {
   });
   const bl = buildBroadleaf(301, 2.7);
   models.set("birch:0", { parts: [{ geometry: bl.trunk, material: birchBark }, { geometry: bl.foliage, material: leafMats[0] }], height: 2.7, radius: 0.7 });
+  const palmBark = new THREE.MeshStandardMaterial({ map: composePalmBark(23), roughness: 0.92, vertexColors: true, color: 0xd6cdbd });
+  const frondMat = foliageMaterial(composeFrond(37), 0xe6ecc4);
+  (
+    [
+      [9.5, 1.4],
+      [11, 0.6],
+    ] as const
+  ).forEach(([h, lean], v) => {
+    const palm = buildPalm(501 + v * 31, h, lean);
+    models.set(`palm:${v}`, { parts: [{ geometry: palm.trunk, material: palmBark }, { geometry: palm.foliage, material: frondMat }], height: h, radius: 4, wind: 0.2 });
+  });
   models.set("bush:0", { parts: [{ geometry: buildBush(41, 1.1), material: leafMats[1] }], height: 1.1, radius: 0.8 });
   const fernMat = foliageMaterial(fernTex, 0x9fbf82);
   for (let v = 0; v < 3; v++) models.set(`bushes:${v}`, { parts: [{ geometry: buildFern(61 + v * 13, 0.7), material: fernMat }], height: 0.7, radius: 0.8 });

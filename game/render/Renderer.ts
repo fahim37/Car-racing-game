@@ -42,11 +42,17 @@ export interface Grade {
   vignette: number;
   lift: THREE.Vector3; // shadow tint
   gain: THREE.Vector3; // highlight tint
+  /** White balance, applied to the linear image before tone mapping. */
+  white: THREE.Vector3;
+  /** Strength of the sun glare and lens ghosts when the sun is in view (0 = none). */
+  flare: number;
+  bloom: number;
 }
 
 /**
- * Final pass: filmic tone mapping (ACES, as three.js), sRGB encode, then a cinematic grade in
- * display space (contrast, saturation, split toning), vignette, optional speed blur and dither.
+ * Final pass: white balance, sun glare, filmic tone mapping (ACES, as three.js), sRGB encode,
+ * then a cinematic grade in display space (contrast, saturation, split toning), vignette, lens
+ * ghosts, optional speed blur and dither.
  */
 const FinalShader = {
   uniforms: {
@@ -57,13 +63,35 @@ const FinalShader = {
     uVignette: { value: 0.3 },
     uLift: { value: new THREE.Vector3(0.97, 0.99, 1.03) },
     uGain: { value: new THREE.Vector3(1.04, 1.01, 0.96) },
+    uWhite: { value: new THREE.Vector3(1, 1, 1) },
     uBlur: { value: 0 },
+    uSunPos: { value: new THREE.Vector2(0.5, 0.5) },
+    uSunVis: { value: 0 },
+    uSunColor: { value: new THREE.Vector3(1, 0.85, 0.6) },
+    uAspect: { value: 1 },
   },
   vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
   fragmentShader: `
 uniform sampler2D tDiffuse; uniform float uExposure; uniform float uContrast; uniform float uSaturation; uniform float uVignette;
-uniform vec3 uLift; uniform vec3 uGain; uniform float uBlur;
+uniform vec3 uLift; uniform vec3 uGain; uniform vec3 uWhite; uniform float uBlur;
+uniform vec2 uSunPos; uniform float uSunVis; uniform vec3 uSunColor; uniform float uAspect;
 varying vec2 vUv;
+float gradeLum(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+// The sky's sun is thousands of times brighter than anything else in the frame, so whatever
+// covers it (a hill, a tree, the car) shows up as a drop in brightness at its position.
+float sunVisible() {
+  float v = 2.0 * smoothstep(60.0, 400.0, gradeLum(texture2D(tDiffuse, uSunPos).rgb));
+  for (int i = 0; i < 8; i++) {
+    float a = float(i) * 0.7854;
+    v += smoothstep(60.0, 400.0, gradeLum(texture2D(tDiffuse, uSunPos + vec2(cos(a) / uAspect, sin(a)) * 0.0035).rgb));
+  }
+  return v / 10.0 * uSunVis;
+}
+float hexDist(vec2 p) { p = abs(p); return max(p.x * 0.866025 + p.y * 0.5, p.y); }
+float ghost(vec2 axis, float t, float r) {
+  float d = hexDist((vUv - uSunPos - axis * t) * vec2(uAspect, 1.0)) / r;
+  return (1.0 - smoothstep(0.88, 1.0, d)) * (0.5 + 0.5 * smoothstep(0.4, 1.0, d));
+}
 vec3 gradeRRTODT(vec3 v) { vec3 a = v * (v + 0.0245786) - 0.000090537; vec3 b = v * (0.983729 * v + 0.4329510) + 0.238081; return a / b; }
 vec3 gradeAces(vec3 color) {
   const mat3 inM = mat3(vec3(0.59719, 0.07600, 0.02840), vec3(0.35458, 0.90834, 0.13383), vec3(0.04823, 0.01566, 0.83777));
@@ -82,13 +110,30 @@ void main() {
     for (int i = 0; i < 8; i++) col += texture2D(tDiffuse, vUv - dir * (float(i) / 7.0) * uBlur * edge * 0.06).rgb;
     col /= 8.0;
   } else col = texture2D(tDiffuse, vUv).rgb;
-  col = gradeSrgb(gradeAces(col * uExposure));
-  float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
+  col *= uWhite * uExposure;
+  float sv = uSunVis > 0.001 ? sunVisible() : 0.0;
+  if (sv > 0.0) {
+    // Warm glare around the sun, and a faint golden veil over the frame when looking into it.
+    float sr = length((vUv - uSunPos) * vec2(uAspect, 1.0));
+    col += uSunColor * sv * (exp(-sr * 24.0) * 3.0 + exp(-sr * 5.5) * 0.4 + 0.05);
+  }
+  col = gradeSrgb(gradeAces(col));
+  float l = gradeLum(col);
   col = mix(vec3(l), col, uSaturation);
   col = (col - 0.45) * uContrast + 0.45;
   col *= mix(uLift, uGain, smoothstep(0.05, 0.85, l));
   vec2 d = vUv - 0.5;
   col *= 1.0 - dot(d, d) * uVignette * 1.7;
+  if (sv > 0.0) {
+    // Lens ghosts strung along the line from the sun through the centre of the frame.
+    vec2 axis = vec2(0.5) - uSunPos;
+    vec3 g = vec3(0.55, 0.85, 0.3) * 0.16 * ghost(axis, 0.42, 0.028);
+    g += vec3(0.8, 0.78, 0.35) * 0.07 * ghost(axis, 0.7, 0.06);
+    g += vec3(0.95, 0.62, 0.3) * 0.12 * ghost(axis, 1.18, 0.02);
+    g += vec3(0.4, 0.75, 0.4) * 0.05 * ghost(axis, 1.45, 0.09);
+    g += vec3(0.75, 0.9, 0.35) * 0.08 * ghost(axis, 1.8, 0.042);
+    col += g * sv;
+  }
   col += (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) / 255.0;
   gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
 }`,
@@ -106,6 +151,7 @@ export class Renderer {
   private frameTimes: number[] = [];
   dynamicResolution = true;
   motionBlur = 0;
+  private flare = 0;
   private size = new THREE.Vector2(1, 1);
 
   constructor(
@@ -122,7 +168,13 @@ export class Renderer {
     this.quality = qualityProfile(q, window.devicePixelRatio || 1);
     this.composer = this.makeComposer();
     this.renderPass = new RenderPass(new THREE.Scene(), new THREE.PerspectiveCamera());
-    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.22, 0.45, 0.92);
+    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.22, 0.6, 0.9);
+    // Soft threshold, and cap what feeds the blur so the sun's tiny, extremely bright disc makes a
+    // glow rather than washing out half the frame.
+    (this.bloomPass.highPassUniforms as Record<string, THREE.IUniform>).smoothWidth.value = 0.8;
+    const hp = this.bloomPass.materialHighPassFilter;
+    hp.fragmentShader = hp.fragmentShader.replace("vec4 texel = texture2D( tDiffuse, vUv );", "vec4 texel = min( texture2D( tDiffuse, vUv ), vec4( 24.0 ) );");
+    hp.needsUpdate = true;
     this.finalPass = new ShaderPass(FinalShader);
     this.finalPass.material.toneMapped = false;
     this.rebuildPasses();
@@ -163,6 +215,17 @@ export class Renderer {
     u.uVignette.value = g.vignette;
     u.uLift.value.copy(g.lift);
     u.uGain.value.copy(g.gain);
+    u.uWhite.value.copy(g.white);
+    this.bloomPass.strength = g.bloom;
+    this.flare = g.flare;
+  }
+
+  /** Where the sun is on screen (0..1 uv) and how much of it is in view (0 = behind or off screen). */
+  setSun(u: number, v: number, inView: number, color: THREE.Color) {
+    const un = this.finalPass.uniforms;
+    un.uSunPos.value.set(u, v);
+    un.uSunVis.value = inView * this.flare;
+    un.uSunColor.value.set(color.r, color.g, color.b);
   }
 
   private applyPixelRatio() {
@@ -173,6 +236,7 @@ export class Renderer {
 
   resize(w: number, h: number) {
     this.size.set(w, h);
+    this.finalPass.uniforms.uAspect.value = w / h;
     this.renderer.setSize(w, h, false);
     this.composer.setSize(w, h);
   }
